@@ -77,7 +77,7 @@ flowchart TD
 執行正式實驗：
 
 ```powershell
-.\.venv\Scripts\python.exe experiments\ae_cvae_tactic\run_contrastive_experiment.py `
+uv run python experiments\ae_cvae_tactic\run_contrastive_experiment.py `
   --config experiments\ae_cvae_tactic\configs\contrastive.yaml
 ```
 
@@ -184,7 +184,7 @@ Compatibility prediction 仍依設定使用 deterministic reconstruction MSE，�
 Repository 目前使用 Python 3.12 的 `.venv`。在 repository root 執行：
 
 ```powershell
-.\.venv\Scripts\python.exe -m pip install -r experiments\ae_cvae_tactic\requirements.txt
+uv sync
 ```
 
 預設 payload 與 condition 都使用 [`nomic-ai/modernbert-embed-base`](https://huggingface.co/nomic-ai/modernbert-embed-base)，並釘選相同 revision `d556a88e...`。模型原生支援 8,192 tokens，兩種文字都輸出 768 維 sentence embedding。第一次使用尚未快取的模型時，Hugging Face 會下載模型檔，但程式不會呼叫付費或線上推論 API。
@@ -201,25 +201,25 @@ UMAP 未安裝時只跳過 UMAP。Parquet 需要 `requirements-optional.txt`；�
 
 ```powershell
 # AE baseline
-.\.venv\Scripts\python.exe experiments\ae_cvae_tactic\run_experiment.py --config experiments\ae_cvae_tactic\configs\default.yaml --run ae
+uv run python experiments\ae_cvae_tactic\run_experiment.py --config experiments\ae_cvae_tactic\configs\default.yaml --run ae
 
 # CVAE oracle-condition latent evaluation
-.\.venv\Scripts\python.exe experiments\ae_cvae_tactic\run_experiment.py --config experiments\ae_cvae_tactic\configs\default.yaml --run cvae
+uv run python experiments\ae_cvae_tactic\run_experiment.py --config experiments\ae_cvae_tactic\configs\default.yaml --run cvae
 
 # CVAE training/loading plus compatibility test
-.\.venv\Scripts\python.exe experiments\ae_cvae_tactic\run_experiment.py --config experiments\ae_cvae_tactic\configs\default.yaml --run compatibility
+uv run python experiments\ae_cvae_tactic\run_experiment.py --config experiments\ae_cvae_tactic\configs\default.yaml --run compatibility
 
 # Six condition ablations
-.\.venv\Scripts\python.exe experiments\ae_cvae_tactic\run_experiment.py --config experiments\ae_cvae_tactic\configs\default.yaml --run ablation
+uv run python experiments\ae_cvae_tactic\run_experiment.py --config experiments\ae_cvae_tactic\configs\default.yaml --run ablation
 
 # Everything; the full-condition CVAE is reused instead of trained twice
-.\.venv\Scripts\python.exe experiments\ae_cvae_tactic\run_experiment.py --config experiments\ae_cvae_tactic\configs\default.yaml --run all
+uv run python experiments\ae_cvae_tactic\run_experiment.py --config experiments\ae_cvae_tactic\configs\default.yaml --run all
 ```
 
 使用既有 output/checkpoint：
 
 ```powershell
-.\.venv\Scripts\python.exe experiments\ae_cvae_tactic\run_experiment.py --config experiments\ae_cvae_tactic\configs\default.yaml --run compatibility --run-dir outputs\ae_cvae_tactic\2026-xx-xx_xxxxxx
+uv run python experiments\ae_cvae_tactic\run_experiment.py --config experiments\ae_cvae_tactic\configs\default.yaml --run compatibility --run-dir outputs\ae_cvae_tactic\2026-xx-xx_xxxxxx
 ```
 
 `--run-dir` 會重新建立相同 deterministic split/preprocessing，並在 checkpoint 存在時載入模型。config、資料與模型維度必須相容。
@@ -333,7 +333,7 @@ Oracle CVAE 已經取得正確 tactic description，不能視為純 payload clas
 ## Tests
 
 ```powershell
-.\.venv\Scripts\python.exe -m unittest discover -s experiments\ae_cvae_tactic\tests -v
+uv run python -m unittest discover -s experiments\ae_cvae_tactic\tests -v
 ```
 
 測試使用 synthetic precomputed embeddings，不下載模型。

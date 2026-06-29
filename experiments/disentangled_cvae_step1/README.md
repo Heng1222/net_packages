@@ -88,7 +88,7 @@ residual_constraint: 0.5
 Prepare only:
 
 ```powershell
-.\.venv\Scripts\python.exe experiments\disentangled_cvae_step1\run_experiment.py `
+uv run python experiments\disentangled_cvae_step1\run_experiment.py `
   --config experiments\disentangled_cvae_step1\configs\default.yaml `
   --stage prepare
 ```
@@ -96,7 +96,7 @@ Prepare only:
 Train only, reusing prepared data:
 
 ```powershell
-.\.venv\Scripts\python.exe experiments\disentangled_cvae_step1\run_experiment.py `
+uv run python experiments\disentangled_cvae_step1\run_experiment.py `
   --config experiments\disentangled_cvae_step1\configs\default.yaml `
   --stage train
 ```
@@ -104,7 +104,7 @@ Train only, reusing prepared data:
 Run both stages:
 
 ```powershell
-.\.venv\Scripts\python.exe experiments\disentangled_cvae_step1\run_experiment.py `
+uv run python experiments\disentangled_cvae_step1\run_experiment.py `
   --config experiments\disentangled_cvae_step1\configs\default.yaml `
   --stage all
 ```
@@ -112,7 +112,7 @@ Run both stages:
 Run tests:
 
 ```powershell
-.\.venv\Scripts\python.exe -m unittest discover -s experiments\disentangled_cvae_step1\tests -v
+uv run python -m unittest discover -s experiments\disentangled_cvae_step1\tests -v
 ```
 
 ## Outputs

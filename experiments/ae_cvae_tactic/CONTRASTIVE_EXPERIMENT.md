@@ -28,7 +28,7 @@ rows as negatives. Payloads belonging to the same tactic therefore are not false
 From the repository root:
 
 ```powershell
-.\.venv\Scripts\python.exe experiments\ae_cvae_tactic\run_contrastive_experiment.py `
+uv run python experiments\ae_cvae_tactic\run_contrastive_experiment.py `
   --config experiments\ae_cvae_tactic\configs\contrastive.yaml
 ```
 

@@ -1,0 +1,269 @@
+from __future__ import annotations
+
+import math
+from typing import Any
+
+import torch
+from torch import nn
+from torch.nn import functional as F
+
+
+def activation_layer(name: str) -> nn.Module:
+    mapping: dict[str, type[nn.Module]] = {
+        "relu": nn.ReLU,
+        "gelu": nn.GELU,
+        "elu": nn.ELU,
+        "leaky_relu": nn.LeakyReLU,
+        "tanh": nn.Tanh,
+    }
+    key = name.lower()
+    if key not in mapping:
+        raise ValueError(f"Unsupported activation: {name}")
+    return mapping[key]()
+
+
+def build_mlp(
+    input_dim: int,
+    hidden_dims: list[int],
+    activation: str,
+    dropout: float,
+    batch_norm: bool,
+) -> tuple[nn.Sequential, int]:
+    layers: list[nn.Module] = []
+    current = int(input_dim)
+    for hidden in hidden_dims:
+        hidden = int(hidden)
+        layers.append(nn.Linear(current, hidden))
+        if batch_norm:
+            layers.append(nn.BatchNorm1d(hidden))
+        layers.append(activation_layer(activation))
+        if dropout > 0:
+            layers.append(nn.Dropout(float(dropout)))
+        current = hidden
+    return nn.Sequential(*layers), current
+
+
+class DisentangledConditionalVAE(nn.Module):
+    def __init__(
+        self,
+        input_dim: int,
+        residual_dim: int,
+        condition_count: int,
+        condition_dim: int,
+        encoder_hidden_dims: list[int],
+        decoder_hidden_dims: list[int],
+        dropout: float = 0.0,
+        batch_norm: bool = False,
+        activation: str = "relu",
+        observation_variance: float = 1.0,
+        temperature: float = 0.1,
+        utility_margin: float = 0.5,
+        residual_margin: float = 0.5,
+        weights: dict[str, float] | None = None,
+    ) -> None:
+        super().__init__()
+        if min(input_dim, residual_dim, condition_count, condition_dim) <= 0:
+            raise ValueError("All core model dimensions must be positive.")
+        if observation_variance <= 0:
+            raise ValueError("observation_variance must be positive.")
+        if temperature <= 0:
+            raise ValueError("temperature must be positive.")
+        self.input_dim = int(input_dim)
+        self.residual_dim = int(residual_dim)
+        self.condition_count = int(condition_count)
+        self.condition_dim = int(condition_dim)
+        self.observation_variance = float(observation_variance)
+        self.temperature = float(temperature)
+        self.utility_margin = float(utility_margin)
+        self.residual_margin = float(residual_margin)
+        self.weights = {
+            "reconstruction": 1.0,
+            "kl": 1.0,
+            "decorrelation": 0.1,
+            "sparse": 0.001,
+            "utility": 0.5,
+            "residual_constraint": 0.5,
+        }
+        if weights:
+            self.weights.update({str(key): float(value) for key, value in weights.items()})
+
+        condition_flat_dim = self.condition_count * self.condition_dim
+        self.encoder_body, encoded_dim = build_mlp(
+            self.input_dim + condition_flat_dim, encoder_hidden_dims, activation, dropout, batch_norm
+        )
+        self.h_mu = nn.Linear(encoded_dim, self.residual_dim)
+        self.h_logvar = nn.Linear(encoded_dim, self.residual_dim)
+        self.gate_out = nn.Linear(encoded_dim, self.condition_count)
+
+        decoder_input = self.residual_dim + condition_flat_dim
+        self.decoder_body, decoded_dim = build_mlp(
+            decoder_input, decoder_hidden_dims, activation, dropout, batch_norm
+        )
+        self.decoder_out = nn.Linear(decoded_dim, self.input_dim)
+
+    @classmethod
+    def from_config(cls, config: dict[str, Any]) -> "DisentangledConditionalVAE":
+        keys = (
+            "input_dim",
+            "residual_dim",
+            "condition_count",
+            "condition_dim",
+            "encoder_hidden_dims",
+            "decoder_hidden_dims",
+            "dropout",
+            "batch_norm",
+            "activation",
+            "observation_variance",
+            "temperature",
+            "utility_margin",
+            "residual_margin",
+            "weights",
+        )
+        return cls(**{key: config[key] for key in keys})
+
+    @staticmethod
+    def reparameterize(mu: torch.Tensor, logvar: torch.Tensor) -> torch.Tensor:
+        std = torch.exp(0.5 * logvar)
+        return mu + torch.randn_like(std) * std
+
+    def _expand_conditions(self, condition_embeddings: torch.Tensor, batch_size: int) -> torch.Tensor:
+        if condition_embeddings.ndim == 2:
+            if condition_embeddings.shape != (self.condition_count, self.condition_dim):
+                raise ValueError(
+                    "condition_embeddings must have shape "
+                    f"({self.condition_count}, {self.condition_dim}); got {tuple(condition_embeddings.shape)}"
+                )
+            return condition_embeddings.unsqueeze(0).expand(batch_size, -1, -1)
+        if condition_embeddings.ndim == 3:
+            if condition_embeddings.shape[1:] != (self.condition_count, self.condition_dim):
+                raise ValueError(
+                    "batched condition_embeddings must have trailing shape "
+                    f"({self.condition_count}, {self.condition_dim}); got {tuple(condition_embeddings.shape)}"
+                )
+            if condition_embeddings.shape[0] != batch_size:
+                raise ValueError("Batched condition_embeddings batch size does not match x.")
+            return condition_embeddings
+        raise ValueError("condition_embeddings must be 2D or 3D.")
+
+    def encode(
+        self,
+        x: torch.Tensor,
+        condition_embeddings: torch.Tensor,
+        sample: bool = True,
+    ) -> dict[str, torch.Tensor]:
+        conditions = self._expand_conditions(condition_embeddings, len(x))
+        encoder_input = torch.cat((x, conditions.flatten(start_dim=1)), dim=1)
+        hidden = self.encoder_body(encoder_input)
+        h_mu = self.h_mu(hidden)
+        h_logvar = self.h_logvar(hidden).clamp(min=-30.0, max=20.0)
+        h = self.reparameterize(h_mu, h_logvar) if sample else h_mu
+        gates = torch.sigmoid(self.gate_out(hidden))
+        return {
+            "h": h,
+            "h_mu": h_mu,
+            "h_logvar": h_logvar,
+            "conditions": conditions,
+            "gates": gates,
+        }
+
+    def decode(self, h: torch.Tensor, condition_embeddings: torch.Tensor, gates: torch.Tensor) -> torch.Tensor:
+        conditions = self._expand_conditions(condition_embeddings, len(h))
+        gated = conditions * gates.unsqueeze(-1)
+        decoder_input = torch.cat((h, gated.flatten(start_dim=1)), dim=1)
+        hidden = self.decoder_body(decoder_input)
+        return self.decoder_out(hidden)
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        condition_embeddings: torch.Tensor,
+        sample: bool = True,
+    ) -> dict[str, torch.Tensor]:
+        output = self.encode(x, condition_embeddings, sample=sample)
+        output["x_recon"] = self.decode(output["h"], output["conditions"], output["gates"])
+        return output
+
+    def semantic_summary(self, condition_embeddings: torch.Tensor, gates: torch.Tensor) -> torch.Tensor:
+        conditions = self._expand_conditions(condition_embeddings, len(gates))
+        weighted = conditions * gates.unsqueeze(-1)
+        denom = gates.sum(dim=1, keepdim=True).clamp_min(1e-6)
+        return weighted.sum(dim=1) / denom
+
+    def ablation_deltas(self, output: dict[str, torch.Tensor], target: torch.Tensor) -> torch.Tensor:
+        full_mse = F.mse_loss(output["x_recon"], target, reduction="none").mean(dim=1)
+        deltas: list[torch.Tensor] = []
+        for component_index in range(self.condition_count):
+            ablated_gates = output["gates"].clone()
+            ablated_gates[:, component_index] = 0.0
+            ablated = self.decode(output["h"], output["conditions"], ablated_gates)
+            ablated_mse = F.mse_loss(ablated, target, reduction="none").mean(dim=1)
+            deltas.append(ablated_mse - full_mse)
+        return torch.stack(deltas, dim=1)
+
+    def auxiliary_reconstructions(self, output: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+        zero_gates = torch.zeros_like(output["gates"])
+        zero_h = torch.zeros_like(output["h"])
+        return {
+            "h_only": self.decode(output["h"], output["conditions"], zero_gates),
+            "c_only": self.decode(zero_h, output["conditions"], output["gates"]),
+        }
+
+    def loss(
+        self,
+        output: dict[str, torch.Tensor],
+        target: torch.Tensor,
+    ) -> dict[str, torch.Tensor]:
+        squared_error = (output["x_recon"] - target).pow(2)
+        recon_nll_per_sample = 0.5 * (
+            squared_error / self.observation_variance
+            + math.log(2.0 * math.pi * self.observation_variance)
+        ).sum(dim=1)
+        recon_nll = recon_nll_per_sample.mean()
+        recon_mse_per_sample = squared_error.mean(dim=1)
+        recon_mse = recon_mse_per_sample.mean()
+        kl_per_sample = -0.5 * torch.sum(
+            1.0 + output["h_logvar"] - output["h_mu"].pow(2) - output["h_logvar"].exp(), dim=1
+        )
+        kl = kl_per_sample.mean()
+
+        normalized_components = F.normalize(output["conditions"], dim=2, eps=1e-8)
+        cosine = torch.bmm(normalized_components, normalized_components.transpose(1, 2))
+        offdiag = 1.0 - torch.eye(self.condition_count, device=target.device).unsqueeze(0)
+        gate_pairs = output["gates"].unsqueeze(2) * output["gates"].unsqueeze(1)
+        decor_num = (cosine.pow(2) * offdiag * gate_pairs).sum()
+        decor_den = (offdiag * gate_pairs).sum().clamp_min(1e-6)
+        decorrelation = decor_num / decor_den
+
+        sparse = output["gates"].mean()
+
+        deltas = self.ablation_deltas(output, target)
+        utility_margin = F.relu(self.utility_margin - deltas)
+        utility = (utility_margin * output["gates"]).sum() / output["gates"].sum().clamp_min(1e-6)
+
+        h_only = self.auxiliary_reconstructions(output)["h_only"]
+        h_only_mse = F.mse_loss(h_only, target, reduction="none").mean(dim=1)
+        residual_constraint = F.relu(self.residual_margin - (h_only_mse - recon_mse_per_sample)).mean()
+
+        total = (
+            self.weights["reconstruction"] * recon_nll
+            + self.weights["kl"] * kl
+            + self.weights["decorrelation"] * decorrelation
+            + self.weights["sparse"] * sparse
+            + self.weights["utility"] * utility
+            + self.weights["residual_constraint"] * residual_constraint
+        )
+        return {
+            "loss": total,
+            "total_loss": total,
+            "recon_nll": recon_nll,
+            "recon_mse": recon_mse,
+            "kl_loss": kl,
+            "decorrelation_loss": decorrelation,
+            "sparse_loss": sparse,
+            "utility_loss": utility,
+            "residual_constraint_loss": residual_constraint,
+            "recon_nll_per_sample": recon_nll_per_sample,
+            "recon_mse_per_sample": recon_mse_per_sample,
+            "kl_per_sample": kl_per_sample,
+            "ablation_delta_mse": deltas,
+        }

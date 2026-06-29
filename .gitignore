@@ -1,0 +1,58 @@
+# Python caches and local environments
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+env/
+
+# Local editor and OS files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Local Codex/agent state
+.agents/
+.codex/
+
+# Training data. Keep the directory README files tracked.
+Year=*/*
+!Year=*/README.md
+!Year=*/.gitkeep
+
+# Experiment outputs, caches, checkpoints, and generated artifacts
+outputs/
+runs/
+checkpoints/
+logs/
+*.log
+*.tmp
+*.pt
+*.pth
+*.ckpt
+*.pkl
+*.pickle
+*.pickle.zst
+*.zst
+*.npy
+*.npz
+*.parquet
+*.feather
+*.h5
+*.hdf5
+*.db
+*.sqlite
+
+# Generated reports/visualizations in the repository root
+umap_payload_3d.html
+umap_payload_3d.png
+*.pdf
+
+# Notebook execution byproducts
+.ipynb_checkpoints/

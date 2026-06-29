@@ -1,0 +1,123 @@
+# Network Payload CVAE Experiments
+
+This repository contains the data preparation scripts and CVAE experiment code for network payload behavior representation experiments.
+
+The repository is set up for GitHub so source code, configs, condition files, tests, and documentation are tracked, while local training data, generated datasets, model checkpoints, embedding caches, and experiment outputs stay out of git.
+
+## Repository layout
+
+```text
+.
+|-- Step1_create_dataset.py
+|-- Step1_clean_rawdata.py
+|-- Step2_create_golden_review.py
+|-- Year=2022/
+|   `-- README.md
+|-- experiments/
+|   |-- ae_cvae_tactic/
+|   `-- disentangled_cvae_step1/
+|-- outputs/                  # ignored, created by experiment runs
+|-- requirements.txt
+`-- requirements-optional.txt
+```
+
+## Setup
+
+Use Python 3.12 from the repository root.
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install --upgrade pip
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+```
+
+Optional parquet export support:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r requirements-optional.txt
+```
+
+The embedding backend uses `nomic-ai/modernbert-embed-base` through `sentence-transformers`. The first run may download model weights into the normal Hugging Face cache.
+
+## Data placement
+
+Data files are intentionally ignored by git. Put local data under `Year=2022/`.
+
+The current scripts support raw pickle inputs anywhere under `Year=2022/`, including nested paths such as:
+
+```text
+Year=2022/Month=10/Day=05/tagging_table_20221005_00_cht_http.pickle.zst
+```
+
+Default configs expect these generated or curated files:
+
+```text
+Year=2022/Step1_rawdata.csv
+Year=2022/Step1_rawdata_cleaned.csv
+Year=2022/Step2_golden_review.csv
+Year=2022/Step2_golden_review_with_Tactic.csv
+```
+
+`Step2_golden_review_with_Tactic.csv` must include the columns from `Step2_golden_review.csv` plus a curated `Tactic` column. The AE/CVAE tactic configs use this file by default.
+
+## Data preparation
+
+Create `Step1_rawdata.csv` from raw pickle or pickle.zst files and then create `Step1_rawdata_cleaned.csv`:
+
+```powershell
+.\.venv\Scripts\python.exe Step1_create_dataset.py --folder Year=2022
+```
+
+If `Step1_rawdata.csv` already exists and only cleaning is needed:
+
+```powershell
+.\.venv\Scripts\python.exe Step1_clean_rawdata.py `
+  --input Year=2022\Step1_rawdata.csv `
+  --output Year=2022\Step1_rawdata_cleaned.csv
+```
+
+Create the golden review sample:
+
+```powershell
+.\.venv\Scripts\python.exe Step2_create_golden_review.py
+```
+
+After review/labeling, save the curated tactic file as:
+
+```text
+Year=2022/Step2_golden_review_with_Tactic.csv
+```
+
+## Running experiments
+
+AE/CVAE tactic experiment:
+
+```powershell
+.\.venv\Scripts\python.exe experiments\ae_cvae_tactic\run_experiment.py `
+  --config experiments\ae_cvae_tactic\configs\default.yaml `
+  --run all
+```
+
+Contrastive CVAE tactic experiment:
+
+```powershell
+.\.venv\Scripts\python.exe experiments\ae_cvae_tactic\run_contrastive_experiment.py `
+  --config experiments\ae_cvae_tactic\configs\contrastive.yaml
+```
+
+Step1 disentangled CVAE experiment:
+
+```powershell
+.\.venv\Scripts\python.exe experiments\disentangled_cvae_step1\run_experiment.py `
+  --config experiments\disentangled_cvae_step1\configs\default.yaml `
+  --stage all
+```
+
+All outputs are written under `outputs/`, which is ignored by git.
+
+## Tests
+
+```powershell
+.\.venv\Scripts\python.exe -m unittest discover -s experiments\ae_cvae_tactic\tests -v
+.\.venv\Scripts\python.exe -m unittest discover -s experiments\disentangled_cvae_step1\tests -v
+```

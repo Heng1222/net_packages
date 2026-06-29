@@ -1,0 +1,627 @@
+你是一位資深 ML / PyTorch 工程師。請幫我在目前 repository 中實作一套可重現的 AE / CVAE latent space 分析實驗框架。
+
+研究目標如下：
+
+我想比較兩種 representation：
+
+1. AE baseline：
+   - input 是 payload 的 embedding 向量 x。
+   - AE 將 x 壓縮成 latent vector H_AE。
+   - 再用 H_AE 做 tactic 分類、聚類、視覺化。
+   - 目的：檢查 payload embedding 本身是否自然包含 MITRE ATT&CK tactic-level 的可分性。
+
+2. CVAE：
+   - input 是 payload embedding x。
+   - condition C 是 tactic description 的 embedding。
+   - CVAE 學習 H_CVAE = Encoder(x, C)。
+   - Decoder 使用 (H_CVAE, C) 重建 x。
+   - 目的：檢查 tactic description 作為 semantic condition 是否能約束 latent space，使 H 更容易對齊 tactic 語意。
+
+請注意：目前 input 資料格式未知，我之後會再提供實際資料格式。因此請先實作「模組化、可替換」的框架，不要把資料格式寫死。
+
+==================================================
+一、請先檢查目前 repository 結構
+==================================================
+
+請先觀察現有 repo 是否已有：
+- data loading 模組
+- model 模組
+- training script
+- config 機制
+- requirements / pyproject / environment
+- notebooks 或既有實驗程式
+
+如果 repo 已經有風格，請沿用既有風格。
+如果沒有，請建立清楚的專案結構。
+
+建議結構如下，但可以依照 repo 現況調整：
+
+experiments/
+  ae_cvae_tactic/
+    configs/
+      default.yaml
+    data/
+      __init__.py
+      dataset.py
+      adapters.py
+      condition_loader.py
+    models/
+      __init__.py
+      ae.py
+      cvae.py
+      classifier.py
+    training/
+      train_ae.py
+      train_cvae.py
+      train_classifier.py
+    evaluation/
+      evaluate_latent.py
+      compatibility_test.py
+      visualization.py
+      metrics.py
+    utils/
+      seed.py
+      io.py
+      logging.py
+    run_experiment.py
+    README.md
+
+也可以使用 src/ 結構，只要清楚即可。
+
+==================================================
+二、資料輸入設計
+==================================================
+
+輸入資料格式如 @Step2_golden_review.csv 格式，`Sess_Tactic_predict`為欄位target分類。
+`payload_list`欄位為原始資料，需要先embedding後才會是輸入的內容。Embedding可以先丟到一個能吃足夠長度的embedding model轉成embed。請將target和input欄位利用變數控制，方便後續修改。
+==================================================
+三、condition C：tactic description embedding
+==================================================
+
+請實作 condition loader。
+
+condition 的來源之後會由我提供，可以是 JSON / YAML / CSV，但你先依照 @Step2_golden_review.csv的`Sess_Tactic_predict`提到的MITER Framework 的Tactic，去網路上找該Tactic描述並丟到足夠大的embedding，將描述的embedding作為 condition 範例。這部分要保留彈性讓我之後可以根據格式自己修改成其他 condition
+
+格式概念如下：
+
+{
+  "Initial Access": {
+    "description_full": "...",
+    "description_short": "...",
+    "keywords": ["exploit", "phishing", "valid accounts"]
+  },
+  "Execution": {
+    "description_full": "...",
+    "description_short": "...",
+    "keywords": ["command", "script", "malicious code"]
+  }
+}
+
+請支援多種 condition 版本：
+
+- full：完整 tactic 描述
+- short：精簡 tactic 描述
+- keywords：只使用關鍵詞
+- random：隨機 condition，作為 ablation
+- wrong：故意使用錯誤 tactic condition，作為 ablation
+- none：不使用 condition，相當於 AE baseline 或 CVAE ablation
+
+condition embedding C 的取得方式請設計成可插拔：
+
+1. 如果 condition 檔案已經包含 embedding，直接讀取。
+2. 如果只有文字，提供 TextEmbedder interface。
+3. 預設先實作一個簡單版本：
+   - 可使用 sentence-transformers，若環境已有安裝。
+   - 若沒有安裝，不要讓整個程式壞掉，請明確提示使用者：
+     "No text embedding backend available. Please provide precomputed condition embeddings or install sentence-transformers."
+4. 不要使用需要線上 API 的服務。
+5. 不要 fine-tune 大型語言模型。
+
+==================================================
+四、模型需求
+==================================================
+
+請使用 PyTorch 實作。
+
+--------------------------------------------------
+1. AutoEncoder
+--------------------------------------------------
+
+Input:
+  x: [batch_size, input_dim]
+
+Encoder:
+  x -> H_AE
+
+Decoder:
+  H_AE -> x_recon
+
+Loss:
+  reconstruction_loss = MSE(x_recon, x)
+
+請允許 config 控制：
+- input_dim
+- latent_dim
+- hidden_dims
+- dropout
+- activation
+- batch_norm 是否使用
+- reconstruction loss 類型，目前至少支援 mse，可預留 cosine / l1
+
+--------------------------------------------------
+2. Conditional Variational AutoEncoder, CVAE
+--------------------------------------------------
+
+Input:
+  x: [batch_size, input_dim]
+  c: [batch_size, condition_dim]
+
+Encoder:
+  concat(x, c) -> hidden -> mu, logvar
+
+Reparameterization:
+  z = mu + eps * std
+
+Decoder:
+  concat(z, c) -> x_recon
+
+Loss:
+  recon_loss = MSE(x_recon, x)
+  kl_loss = KL(q(z|x,c) || N(0,I))
+  total_loss = recon_loss + beta * kl_loss
+
+請支援 beta-VAE 形式：
+  total_loss = recon_loss + beta * kl_loss
+
+beta 可由 config 控制。
+
+請輸出：
+- z
+- mu
+- logvar
+- x_recon
+
+CVAE 的 latent vector H_CVAE 建議預設使用 mu，因為 inference / evaluation 較穩定。
+請在程式中允許設定 latent_representation = "mu" 或 "z"。
+
+--------------------------------------------------
+3. Latent classifier
+--------------------------------------------------
+
+請實作一個簡單分類器，用於比較 H 的分類能力。
+
+至少支援：
+- Logistic Regression
+- Random Forest
+- MLP classifier
+
+如果 tactic_label 是多類別分類，請輸出：
+- accuracy
+- macro F1
+- weighted F1
+- per-class precision / recall / F1
+- confusion matrix
+
+注意：
+分類器應該在 AE / CVAE 訓練完成後，使用 frozen latent H 訓練。
+不要在 AE / CVAE 訓練過程中直接把分類 loss 混進去，除非另外開 config 選項。
+第一版請先以 representation evaluation 為主。
+
+==================================================
+五、實驗設計
+==================================================
+
+請實作以下實驗流程。
+
+--------------------------------------------------
+Experiment A：AE baseline
+--------------------------------------------------
+
+流程：
+
+1. load payload embeddings x and labels y
+2. split train / val / test
+3. train AE on train x
+4. extract H_AE for train / val / test
+5. train classifier on H_AE_train, y_train
+6. evaluate on H_AE_test
+7. run clustering / visualization on H_AE
+
+輸出：
+- AE reconstruction loss
+- tactic classification metrics
+- latent embeddings 檔案
+- visualization plots
+- report
+
+--------------------------------------------------
+Experiment B：CVAE oracle-condition representation test
+--------------------------------------------------
+
+流程：
+
+1. load payload embeddings x and labels y
+2. load tactic condition embeddings C
+3. 對每筆資料，用其正確 tactic label 對應到 C
+4. train CVAE on (x, C)
+5. extract H_CVAE = mu or z
+6. train classifier on H_CVAE_train, y_train
+7. evaluate on H_CVAE_test
+8. run clustering / visualization on H_CVAE
+
+重要警告：
+這個實驗使用正確 C，因此可能有 label leakage。
+所以請在報告中清楚標註：
+"CVAE oracle-condition classification is not a pure payload-only tactic prediction test. It evaluates whether latent representation becomes more tactic-aligned when conditioned on known tactic descriptions."
+
+輸出：
+- CVAE reconstruction loss
+- KL loss
+- total loss
+- tactic classification metrics
+- latent embeddings
+- visualization plots
+- report
+
+--------------------------------------------------
+Experiment C：CVAE compatibility test
+--------------------------------------------------
+
+這個實驗非常重要，目的是避免單純把正確 C 當答案餵給模型。
+
+測試方式：
+
+對每一個 test sample x_i：
+  將它分別搭配所有 candidate tactic conditions C_k。
+  對每一組 (x_i, C_k) 計算：
+    - reconstruction error
+    - optionally negative ELBO
+  選擇 reconstruction error 最低或 score 最佳的 tactic 作為 predicted tactic。
+
+也就是：
+
+score(x_i, C_k) = recon_loss 或 recon_loss + beta * KL
+
+predicted_tactic = argmin_k score(x_i, C_k)
+
+請實作：
+
+compatibility_test.py
+
+輸出：
+- score matrix: [num_samples, num_tactics]
+- predicted tactic
+- accuracy
+- macro F1
+- confusion matrix
+- 每個 tactic 的平均 compatibility score
+- CSV / JSON 結果檔
+
+這個實驗的意義：
+檢查 payload x 和哪一個 tactic description C 最相容，而不是直接把正確 label 塞進模型。
+
+--------------------------------------------------
+Experiment D：Condition ablation
+--------------------------------------------------
+
+請設計 config 讓我可以切換 condition_mode：
+
+condition_mode:
+  - full
+  - short
+  - keywords
+  - random
+  - wrong
+  - none
+
+每種 condition mode 都可以跑 CVAE，並比較：
+
+- reconstruction loss
+- KL loss
+- classification metrics
+- compatibility test metrics
+- clustering quality
+- visualization
+
+輸出一個總表：
+
+condition_mode | recon_loss | kl_loss | acc | macro_f1 | silhouette | nmi | ari
+
+如果某些 metric 因 label 不存在而無法計算，請輸出 NA，不要讓程式壞掉。
+
+==================================================
+六、資料切分與避免 leakage
+==================================================
+
+請實作清楚的 train / val / test split。
+
+需求：
+- 支援 stratified split，如果 label 存在。
+- split ratio 可由 config 控制，例如 0.7 / 0.15 / 0.15。
+- random seed 固定。
+- 所有 scaler / normalizer 只能 fit 在 train set。
+- val / test 只能 transform。
+- classification 的 test set 不可以參與 AE / CVAE training。
+- compatibility test 應該在 test set 上做。
+
+如果資料有時間欄位，請預留 time-based split 的選項，但第一版可以先不完整實作。
+
+==================================================
+七、normalization / preprocessing
+==================================================
+
+請支援以下選項：
+
+- no normalization
+- StandardScaler
+- MinMaxScaler
+- L2 normalization
+
+由 config 控制：
+
+preprocessing:
+  normalization: "standard" | "minmax" | "l2" | "none"
+
+scaler 需儲存到 output directory。
+
+==================================================
+八、evaluation 與 visualization
+==================================================
+
+請實作以下 evaluation：
+
+1. Classification metrics
+   - accuracy
+   - macro F1
+   - weighted F1
+   - per-class report
+   - confusion matrix
+
+2. Clustering metrics，如果 labels 存在：
+   - silhouette score
+   - NMI
+   - ARI
+
+3. Visualization：
+   - PCA 2D
+   - t-SNE 2D
+   - UMAP 2D，如果 umap-learn 有安裝；若沒有，跳過並提示。
+   - 圖上用 tactic label 上色。
+   - 如果 label 不存在，仍可輸出無標籤 scatter plot。
+
+4. Latent export：
+   - 儲存 H_AE / H_CVAE 到 parquet 或 npz。
+   - 包含 sample_id、label、latent vector、split。
+
+==================================================
+九、output directory 規範
+==================================================
+
+每次 run 請建立獨立 output directory，例如：
+
+outputs/
+  ae_cvae_tactic/
+    2026-xx-xx_yyyyyy/
+      config_resolved.yaml
+      logs/
+      checkpoints/
+        ae.pt
+        cvae.pt
+      scalers/
+        scaler.pkl
+      latent/
+        ae_train_latent.parquet
+        ae_val_latent.parquet
+        ae_test_latent.parquet
+        cvae_train_latent.parquet
+        cvae_val_latent.parquet
+        cvae_test_latent.parquet
+      metrics/
+        ae_metrics.json
+        cvae_metrics.json
+        compatibility_metrics.json
+        condition_ablation_summary.csv
+      plots/
+        ae_pca.png
+        ae_tsne.png
+        cvae_pca.png
+        cvae_tsne.png
+        confusion_matrix_ae.png
+        confusion_matrix_cvae.png
+      reports/
+        report.md
+
+report.md 請自動產生，至少包含：
+- 實驗設定摘要
+- 資料量與 split 統計
+- AE 結果
+- CVAE 結果
+- compatibility test 結果
+- condition ablation 結果
+- leakage warning
+- interpretation notes
+
+==================================================
+十、config 設計
+==================================================
+
+請使用 YAML config。
+
+請提供 default.yaml，內容至少包含：
+
+seed: 42
+
+data:
+  input_path: null
+  input_format: null
+  sample_id_col: null
+  label_col: null
+  payload_text_col: null
+  embedding_col: null
+  embedding_prefix: null
+  metadata_cols: []
+  split:
+    strategy: "stratified"
+    train_ratio: 0.7
+    val_ratio: 0.15
+    test_ratio: 0.15
+
+conditions:
+  path: null
+  format: null
+  condition_mode: "full"
+  text_field_full: "description_full"
+  text_field_short: "description_short"
+  text_field_keywords: "keywords"
+  embedding_field: null
+  embedder_backend: "sentence_transformers"
+  embedder_model_name: "sentence-transformers/all-MiniLM-L6-v2"
+
+preprocessing:
+  normalization: "standard"
+
+model:
+  ae:
+    input_dim: null
+    latent_dim: 64
+    hidden_dims: [512, 256, 128]
+    dropout: 0.1
+    batch_norm: true
+    activation: "relu"
+    reconstruction_loss: "mse"
+
+  cvae:
+    input_dim: null
+    condition_dim: null
+    latent_dim: 64
+    hidden_dims: [512, 256, 128]
+    dropout: 0.1
+    batch_norm: true
+    activation: "relu"
+    reconstruction_loss: "mse"
+    beta: 0.01
+    latent_representation: "mu"
+
+training:
+  batch_size: 128
+  max_epochs: 100
+  learning_rate: 0.001
+  weight_decay: 0.00001
+  early_stopping_patience: 10
+  device: "auto"
+
+classifier:
+  type: "logistic_regression"
+  mlp_hidden_dims: [128, 64]
+  random_state: 42
+
+evaluation:
+  run_classification: true
+  run_clustering: true
+  run_visualization: true
+  run_compatibility_test: true
+  visualization_methods: ["pca", "tsne", "umap"]
+
+output:
+  base_dir: "outputs/ae_cvae_tactic"
+
+==================================================
+十一、CLI 需求
+==================================================
+
+請提供一個主要入口：
+
+python experiments/ae_cvae_tactic/run_experiment.py --config experiments/ae_cvae_tactic/configs/default.yaml
+
+也請支援只跑部分實驗，例如：
+
+python experiments/ae_cvae_tactic/run_experiment.py --config ... --run ae
+python experiments/ae_cvae_tactic/run_experiment.py --config ... --run cvae
+python experiments/ae_cvae_tactic/run_experiment.py --config ... --run compatibility
+python experiments/ae_cvae_tactic/run_experiment.py --config ... --run ablation
+python experiments/ae_cvae_tactic/run_experiment.py --config ... --run all
+
+==================================================
+十二、程式品質要求
+==================================================
+
+請做到：
+
+1. 型別提示 type hints。
+2. 清楚的 error message。
+3. 不要 hard-code path。
+4. 不要 hard-code label name。
+5. 不要 hard-code input_dim / condition_dim。
+6. 如果 input_dim 無法從資料推斷，請給明確錯誤。
+7. 如果 condition 缺少某個 tactic label，請列出缺失 label。
+8. 如果 labels 不存在，仍可訓練 AE / CVAE，但跳過 classification metrics。
+9. 每個主要步驟都要 logging。
+10. random seed 固定。
+11. 支援 CPU / CUDA 自動選擇。
+12. 儘量避免大型 dependency；必要 dependency 請寫進 requirements。
+13. 請建立 README.md，說明如何使用、如何新增資料 adapter、如何準備 condition file。
+
+==================================================
+十三、重要研究解讀與 warning
+==================================================
+
+請在 report.md 與 README.md 中明確寫出以下觀念：
+
+1. AE H 分類：
+   - 用來測試 payload embedding 本身是否已經具有 tactic-level 可分性。
+   - 這是 baseline。
+
+2. CVAE oracle-condition H 分類：
+   - 使用正確 tactic description 作為 condition C。
+   - 因此不能直接視為純 payload-only classification。
+   - 它比較像是在測：當 tactic knowledge 已知時，latent space 是否更能對齊 tactic 語意。
+
+3. CVAE compatibility test：
+   - 對同一個 payload 搭配所有 candidate tactic descriptions。
+   - 用 reconstruction error 或 negative ELBO 判斷 payload 與 tactic condition 的相容性。
+   - 這比較接近實際 tactic 推論。
+
+4. condition ablation：
+   - 用來檢查 C 是否真的有作用。
+   - 如果 full / short / keywords / random / wrong condition 結果差不多，代表 CVAE 可能沒有真正使用 tactic semantics。
+   - 如果換錯 C 後 reconstruction 或 compatibility 明顯變差，代表 condition C 可能有提供有效語意約束。
+
+5. payload embedding input 的限制：
+   - 模型學到的是 embedding model 已經轉換過的 payload 語意，而不是 raw packet 本身。
+   - 如果 embedding model 不懂資安語意，H 可能只反映一般文字相似性。
+   - 因此後續可以比較不同 payload embedding 方法。
+
+==================================================
+十四、請優先完成的最小可行版本
+==================================================
+
+如果時間或 repo 狀況有限，請優先完成 MVP：
+
+1. 通用 Dataset interface。
+2. CSV / JSONL / NPY loader。
+3. condition loader。
+4. AE model。
+5. CVAE model。
+6. AE training。
+7. CVAE training。
+8. latent export。
+9. Logistic Regression classifier evaluation。
+10. compatibility test。
+11. PCA / t-SNE visualization。
+12. report.md 自動輸出。
+
+先不要做過度複雜的 deep classifier 或 fancy visualization。
+
+==================================================
+十五、完成後請回報
+==================================================
+
+完成後請列出：
+
+1. 新增或修改了哪些檔案。
+2. 如何執行 AE baseline。
+3. 如何執行 CVAE。
+4. 如何執行 compatibility test。
+5. 目前尚未實作或需要我補資料格式的地方。
+6. 我需要提供哪些資料欄位或 condition file 才能正式跑實驗。
+7. 將這些重要資訊寫到README.md方便後續確認

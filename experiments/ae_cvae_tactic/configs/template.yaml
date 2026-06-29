@@ -1,0 +1,98 @@
+seed: 42
+data:
+  input_path: null
+  input_format: null
+  metadata_path: null
+  array_key: "x"
+  sample_id_col: null
+  label_col: null
+  condition_key_col: null
+  payload_text_col: null
+  payload_parser: "auto"
+  embedding_col: null
+  embedding_prefix: null
+  metadata_cols: []
+  exclude_from_cvae: []
+  embedder:
+    backend: "sentence_transformers"
+    model_name: "nomic-ai/modernbert-embed-base"
+    model_revision: "d556a88e332558790b210f7bdbe87da2fa94a8d8"
+    max_length: 8192
+    overflow_strategy: "error"
+    batch_size: 4
+    normalize: true
+    cache_dir: "outputs/ae_cvae_tactic/embedding_cache"
+  split:
+    strategy: "stratified"
+    train_ratio: 0.7
+    val_ratio: 0.15
+    test_ratio: 0.15
+    time_col: null
+conditions:
+  path: null
+  format: null
+  condition_mode: "full"
+  label_field: "label"
+  id_field: "tactic_id"
+  text_field_full: "description_full"
+  text_field_short: "description_short"
+  text_field_keywords: "keywords"
+  embedding_field: null
+  embedder_backend: "sentence_transformers"
+  embedder_model_name: "nomic-ai/modernbert-embed-base"
+  embedder_model_revision: "d556a88e332558790b210f7bdbe87da2fa94a8d8"
+  batch_size: 4
+  random_dim: 768
+  wrong_base_mode: "full"
+  normalize: true
+preprocessing:
+  normalization: "standard"
+model:
+  ae:
+    input_dim: null
+    latent_dim: 64
+    hidden_dims: [512, 256, 128]
+    dropout: 0.1
+    batch_norm: true
+    activation: "relu"
+    reconstruction_loss: "mse"
+  cvae:
+    input_dim: null
+    condition_dim: 768
+    latent_dim: 64
+    hidden_dims: [512, 256, 128]
+    dropout: 0.1
+    batch_norm: true
+    activation: "relu"
+    reconstruction_loss: "mse"
+    objective: "elbo"
+    likelihood: "gaussian"
+    observation_variance: 1.0
+    latent_representation: "mu"
+training:
+  batch_size: 128
+  max_epochs: 100
+  learning_rate: 0.001
+  weight_decay: 0.00001
+  early_stopping_patience: 10
+  num_workers: 0
+  device: "auto"
+classifier:
+  type: "logistic_regression"
+  class_weight: "balanced"
+  mlp_hidden_dims: [128, 64]
+  max_iter: 1000
+  random_state: 42
+evaluation:
+  run_classification: true
+  run_clustering: true
+  run_visualization: true
+  run_compatibility_test: true
+  visualization_methods: ["pca", "tsne", "umap"]
+  visualization_max_samples: 3000
+  compatibility_score: "reconstruction"
+ablation:
+  modes: ["full", "short", "keywords", "random", "wrong", "none"]
+output:
+  base_dir: "outputs/ae_cvae_tactic"
+  latent_format: "npz"

@@ -1,0 +1,98 @@
+seed: 42
+
+data:
+  input_path: "Year=2022/Step1_rawdata_cleaned.csv"
+  prepared_dir: "outputs/disentangled_cvae_step1/prepared/step1_clean_payload_modernbert"
+  input_format: "csv"
+  sample_id_col: "Session_ID"
+  payload_text_col: "clean_payload_list"
+  payload_parser: "auto"
+  label_col: "Sess_Tactic_predict"
+  time_col: "Datetime"
+  metadata_cols:
+    - "Src_ISP"
+    - "Protocol"
+    - "city"
+    - "country"
+    - "isp"
+    - "iso_code"
+    - "Sess_Technique_predict"
+    - "Sess_SubTechnique_predict"
+    - "Sess_Malicious_Score"
+  read_chunksize: 5000
+  max_rows: null
+  label_multi_policy: "error"
+  skip_empty_labels: true
+  normal_label: "Normal (TA9000)"
+  split:
+    strategy: "time"
+    train_ratio: 0.7
+    val_ratio: 0.15
+    test_ratio: 0.15
+  embedder:
+    backend: "sentence_transformers"
+    model_name: "nomic-ai/modernbert-embed-base"
+    model_revision: "d556a88e332558790b210f7bdbe87da2fa94a8d8"
+    max_length: 8192
+    overflow_strategy: "chunk_mean"
+    batch_size: 4
+    normalize: true
+
+conditions:
+  path: "experiments/disentangled_cvae_step1/conditions/mitre_attack_v11_3_step1.yaml"
+  format: "yaml"
+  label_field: "label"
+  id_field: "tactic_id"
+  text_field: "description_full"
+  embedder_backend: "sentence_transformers"
+  embedder_model_name: "nomic-ai/modernbert-embed-base"
+  embedder_model_revision: "d556a88e332558790b210f7bdbe87da2fa94a8d8"
+  batch_size: 4
+  normalize: true
+  exclude_labels:
+    - "Normal (TA9000)"
+
+preprocessing:
+  normalization: "standard"
+  batch_size: 20000
+
+model:
+  input_dim: 768
+  residual_dim: 64
+  condition_dim: 768
+  encoder_hidden_dims: [1024, 512]
+  decoder_hidden_dims: [1024, 512]
+  dropout: 0.1
+  batch_norm: true
+  activation: "relu"
+  observation_variance: 1.0
+  temperature: 0.1
+  utility_margin: 0.5
+  residual_margin: 0.5
+  weights:
+    reconstruction: 1.0
+    kl: 1.0
+    decorrelation: 0.1
+    sparse: 0.001
+    utility: 0.5
+    residual_constraint: 0.5
+
+training:
+  batch_size: 128
+  max_epochs: 100
+  learning_rate: 0.001
+  weight_decay: 0.00001
+  early_stopping_patience: 10
+  num_workers: 0
+  device: "auto"
+
+evaluation:
+  random_state: 42
+  run_visualization: true
+  visualization_backend: "umap"
+  visualization_max_samples: 5000
+  umap_n_neighbors: 30
+  umap_min_dist: 0.1
+
+output:
+  base_dir: "outputs/disentangled_cvae_step1"

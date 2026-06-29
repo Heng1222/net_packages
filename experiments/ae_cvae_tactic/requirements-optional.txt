@@ -1,0 +1,2 @@
+# Optional parquet latent export. NPZ export does not require this package.
+pyarrow>=16

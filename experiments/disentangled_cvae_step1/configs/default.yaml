@@ -13,12 +13,11 @@ data:
     - "Src_ISP"
     - "Protocol"
     - "city"
+    - "payload_list"
+    - "clean_payload_list"
     - "country"
     - "isp"
-    - "iso_code"
     - "Sess_Technique_predict"
-    - "Sess_SubTechnique_predict"
-    - "Sess_Malicious_Score"
   read_chunksize: 5000
   max_rows: null
   label_multi_policy: "error"
@@ -73,7 +72,7 @@ model:
     reconstruction: 1.0
     kl: 1.0
     decorrelation: 0.1
-    sparse: 0.001
+    sparse: 1.0
     utility: 0.5
     residual_constraint: 0.5
 

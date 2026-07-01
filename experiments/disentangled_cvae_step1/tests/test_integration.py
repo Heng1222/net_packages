@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import yaml
 
@@ -127,13 +128,34 @@ class IntegrationTests(unittest.TestCase):
             self.assertFalse((run_dir / "metrics" / "probe_metrics.json").exists())
             self.assertTrue((run_dir / "metrics" / "condition_gate_summary.csv").is_file())
             self.assertTrue((run_dir / "metrics" / "condition_ablation_delta_mse_summary.csv").is_file())
+            self.assertTrue((run_dir / "metrics" / "testset_condition_predictions.csv").is_file())
+            self.assertTrue((run_dir / "metrics" / "testset_subset_100.csv").is_file())
             self.assertFalse((run_dir / "metrics" / "component_activation_summary.csv").exists())
             self.assertFalse((run_dir / "metrics" / "component_activation_by_tactic.csv").exists())
             self.assertTrue((run_dir / "plots" / "condition_cosine_similarity.png").is_file())
+            self.assertTrue((run_dir / "plots" / "training_reconstruction_losses.png").is_file())
             self.assertTrue((run_dir / "plots" / "umap_original_space.png").is_file())
             self.assertTrue((run_dir / "plots" / "umap_h_space.png").is_file())
             self.assertTrue((run_dir / "plots" / "umap_gated_c_space.png").is_file())
             self.assertTrue((run_dir / "reports" / "report.md").is_file())
+
+            history = pd.read_csv(run_dir / "metrics" / "training_history.csv")
+            self.assertIn("val_h_only_mse", history.columns)
+            self.assertIn("val_c_only_mse", history.columns)
+            predictions = pd.read_csv(run_dir / "metrics" / "testset_condition_predictions.csv")
+            prob_cols = [column for column in predictions.columns if column.startswith("condition_prob__")]
+            self.assertGreater(len(prob_cols), 0)
+            np.testing.assert_allclose(
+                predictions[prob_cols].sum(axis=1).to_numpy(),
+                np.ones(len(predictions)),
+                rtol=1e-5,
+                atol=1e-5,
+            )
+            allowed = {column.replace("condition_prob__", "", 1) for column in prob_cols}
+            allowed.add("ambiguous")
+            self.assertTrue(set(predictions["predicted_condition"]).issubset(allowed))
+            subset = pd.read_csv(run_dir / "metrics" / "testset_subset_100.csv")
+            self.assertLessEqual(int(subset.groupby("predicted_condition").size().max()), 100)
 
 
 if __name__ == "__main__":

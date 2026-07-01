@@ -13,7 +13,7 @@ The first version uses the cleaned Step1 packet/session dataset:
 - Primary split: time split, 70% train, 15% validation, 15% test
 - Payload overflow policy: `chunk_mean`
 
-`Normal (TA9000)` is not a condition. `Sess_Tactic_predict` is kept only in prepared metadata for traceability. It is not used as a weak label, not used for condition grouping, and not used for UMAP coloring.
+`Normal (TA9000)` is not a condition. `Sess_Tactic_predict` is kept only in prepared metadata for traceability. It is not used as a weak label or used for condition grouping. Test-set plot colors and exported prediction labels are derived from softmax-normalized CVAE condition gates.
 
 ## Design
 
@@ -129,10 +129,13 @@ Each run writes to `outputs/disentangled_cvae_step1/<timestamp>/`:
 - `metrics/condition_ablation_delta_mse_summary.csv`
 - `metrics/condition_cosine_similarity.csv`
 - `metrics/leakage_report.json`
+- `metrics/testset_condition_predictions.csv`
+- `metrics/testset_subset_100.csv`
 - `plots/condition_cosine_similarity.png`
+- `plots/training_reconstruction_losses.png`
 - `plots/umap_original_space.png`
 - `plots/umap_h_space.png`
 - `plots/umap_gated_c_space.png`
 - `reports/report.md`
 
-`Sess_Tactic_predict` is metadata only in this version. It is not used as a weak label, no tactic classifier/probe is trained, no condition table is grouped by it, and no UMAP plot is colored by it.
+`Sess_Tactic_predict` is metadata only in this version. It is not used as a weak label, no tactic classifier/probe is trained, and no condition table is grouped by it. Test-set UMAP/PCA plots are colored by the model-derived `predicted_condition` label.

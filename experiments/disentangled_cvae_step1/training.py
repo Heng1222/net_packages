@@ -142,17 +142,27 @@ def train_model(
 
         model.eval()
         val_totals = {key: 0.0 for key in TRACKED}
+        val_aux_totals = {"h_only_mse": 0.0, "c_only_mse": 0.0}
         val_count = 0
         with torch.inference_mode():
             for x_batch, _ in val_loader:
                 x_batch = x_batch.to(device)
-                losses = model.loss(model(x_batch, conditions, sample=False), x_batch)
+                output = model(x_batch, conditions, sample=False)
+                losses = model.loss(output, x_batch)
+                aux = model.auxiliary_reconstructions(output)
                 for key in TRACKED:
                     val_totals[key] += float(losses[key]) * len(x_batch)
+                val_aux_totals["h_only_mse"] += float(
+                    torch.nn.functional.mse_loss(aux["h_only"], x_batch, reduction="none").mean(dim=1).mean()
+                ) * len(x_batch)
+                val_aux_totals["c_only_mse"] += float(
+                    torch.nn.functional.mse_loss(aux["c_only"], x_batch, reduction="none").mean(dim=1).mean()
+                ) * len(x_batch)
                 val_count += len(x_batch)
         row: dict[str, float] = {"epoch": float(epoch)}
         row.update({f"train_{key}": value / max(train_count, 1) for key, value in train_totals.items()})
         row.update({f"val_{key}": value / max(val_count, 1) for key, value in val_totals.items()})
+        row.update({f"val_{key}": value / max(val_count, 1) for key, value in val_aux_totals.items()})
         history.append(row)
         val_loss = row["val_loss"]
         if val_loss < best - 1e-10:

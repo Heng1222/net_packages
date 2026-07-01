@@ -25,11 +25,15 @@ from experiments.disentangled_cvae_step1.data import (  # noqa: E402
     standardize_to_memmap,
 )
 from experiments.disentangled_cvae_step1.evaluate import (  # noqa: E402
+    AMBIGUOUS_LABEL,
+    build_test_condition_predictions,
     plot_condition_similarity_heatmap,
+    plot_training_reconstruction_losses,
     plot_umap_projection,
     write_condition_ablation_summary,
     write_condition_gate_summary,
     write_similarity_matrix,
+    write_testset_subset,
 )
 from experiments.disentangled_cvae_step1.model import DisentangledConditionalVAE  # noqa: E402
 from experiments.disentangled_cvae_step1.training import extract_batches, train_model  # noqa: E402
@@ -141,6 +145,7 @@ def run_train(config: dict, run_dir: Path, device: torch.device, logger: logging
         {"best_epoch": result.best_epoch, "best_val_loss": result.best_val_loss},
         run_dir / "metrics" / "training_summary.json",
     )
+    plot_training_reconstruction_losses(result.history, run_dir / "plots" / "training_reconstruction_losses.png")
 
     test_outputs = extract_batches(
         model,
@@ -150,6 +155,14 @@ def run_train(config: dict, run_dir: Path, device: torch.device, logger: logging
         device,
         int(config["training"]["batch_size"]),
     )
+    test_predictions = build_test_condition_predictions(
+        metadata,
+        split.test,
+        test_outputs["gates"],
+        conditions.labels,
+    )
+    test_predictions.to_csv(run_dir / "metrics" / "testset_condition_predictions.csv", index=False)
+    write_testset_subset(test_predictions, run_dir / "metrics" / "testset_subset_100.csv")
     write_json(test_outputs["loss_summary"], run_dir / "metrics" / "loss_summary.json")
     write_condition_gate_summary(
         test_outputs["gates"], conditions.labels, run_dir / "metrics" / "condition_gate_summary.csv"
@@ -173,23 +186,31 @@ def run_train(config: dict, run_dir: Path, device: torch.device, logger: logging
     )
 
     if config.get("evaluation", {}).get("run_visualization", True):
+        predicted_conditions = test_predictions["predicted_condition"].to_numpy()
+        category_order = [*conditions.labels, AMBIGUOUS_LABEL]
         plot_umap_projection(
             np.asarray(x[split.test], dtype=np.float32),
             run_dir / "plots" / "umap_original_space.png",
             "Original payload embedding space",
             config["evaluation"],
+            predicted_conditions,
+            category_order,
         )
         plot_umap_projection(
             test_outputs["h"],
             run_dir / "plots" / "umap_h_space.png",
             "Residual H space",
             config["evaluation"],
+            predicted_conditions,
+            category_order,
         )
         plot_umap_projection(
             test_outputs["c"],
             run_dir / "plots" / "umap_gated_c_space.png",
             "Gated filtered C semantic space",
             config["evaluation"],
+            predicted_conditions,
+            category_order,
         )
 
     write_report(run_dir, metadata, split, conditions.labels, test_outputs["loss_summary"])
@@ -210,7 +231,8 @@ def write_report(
         f"- Rows: {len(metadata)}",
         f"- Train/val/test: {len(split.train)} / {len(split.val)} / {len(split.test)}",
         "- Normal (TA9000) is not a condition.",
-        "- `Sess_Tactic_predict` is retained in prepared metadata only; it is not used for training, grouping, or plot coloring.",
+        "- `Sess_Tactic_predict` is retained in prepared metadata only; it is not used for training.",
+        "- Test-set `predicted_condition` is derived from softmax-normalized CVAE condition gates.",
         "",
         "## Condition Labels",
         "",
@@ -228,14 +250,20 @@ def write_report(
             "## Figures",
             "",
             "- `plots/condition_cosine_similarity.png`",
+            "- `plots/training_reconstruction_losses.png`",
             "- `plots/umap_original_space.png`",
             "- `plots/umap_h_space.png`",
             "- `plots/umap_gated_c_space.png`",
             "",
+            "## Test Classification Outputs",
+            "",
+            "- `metrics/testset_condition_predictions.csv`",
+            "- `metrics/testset_subset_100.csv`",
+            "",
             "## Interpretation Boundary",
             "",
-            "`Sess_Tactic_predict` is a model prediction from an earlier step and is intentionally not used for UMAP colors, "
-            "condition summaries, or training losses. This version does not test whether tactic semantics are learned.",
+            "`Sess_Tactic_predict` is a model prediction from an earlier step and is intentionally not used for training "
+            "or condition summaries. Plot colors and test CSV labels are model-derived CVAE condition-gate predictions.",
             "",
         ]
     )

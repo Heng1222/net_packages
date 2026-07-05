@@ -1,84 +1,390 @@
 metadata:
-  framework: "MITRE Enterprise ATT&CK"
-  version: "11.3 plus Step1 coverage"
-  source: "Existing ae_cvae_tactic condition file extended for Step1 condition coverage."
-  note: "Normal (TA9000) is intentionally omitted from tactics and is not a condition."
+  framework: MITRE Enterprise ATT&CK
+  version: 11.3 plus Step1 coverage
+  source: 'MITRE ATT&CK Enterprise v11.3 STIX bundle: https://raw.githubusercontent.com/mitre-attack/attack-stix-data/master/enterprise-attack/enterprise-attack-11.3.json'
+  note: Normal (TA9000) is intentionally omitted from tactics and is not a condition. Technique lists contain top-level Enterprise
+    ATT&CK v11.3 technique names only; technique IDs and sub-techniques are intentionally omitted.
 tactics:
-  "Initial Access (TA0001)":
-    label: "Initial Access (TA0001)"
-    tactic_id: "TA0001"
-    description_full: "The adversary is trying to get into your network. Initial Access consists of techniques that use various entry vectors to gain their initial foothold within a network. Techniques used to gain a foothold include targeted spearphishing and exploiting weaknesses on public-facing web servers."
-    description_short: "Gain an initial foothold in a target network."
-    keywords: ["initial foothold", "spearphishing", "public-facing application", "valid accounts", "remote services"]
-  "Execution (TA0002)":
-    label: "Execution (TA0002)"
-    tactic_id: "TA0002"
-    description_full: "The adversary is trying to run malicious code. Execution consists of techniques that result in adversary-controlled code running on a local or remote system."
-    description_short: "Run adversary-controlled malicious code."
-    keywords: ["command", "script", "malicious code", "code execution", "remote execution"]
-  "Persistence (TA0003)":
-    label: "Persistence (TA0003)"
-    tactic_id: "TA0003"
-    description_full: "The adversary is trying to maintain their foothold. Persistence consists of techniques that adversaries use to keep access to systems across restarts, changed credentials, and other interruptions."
-    description_short: "Maintain access across restarts and interruptions."
-    keywords: ["maintain access", "startup", "account", "configuration change", "foothold"]
-  "Privilege Escalation (TA0004)":
-    label: "Privilege Escalation (TA0004)"
-    tactic_id: "TA0004"
-    description_full: "The adversary is trying to gain higher-level permissions. Privilege Escalation consists of techniques that adversaries use to obtain elevated access, such as administrator, root, or system permissions, after gaining initial access."
-    description_short: "Gain higher-level permissions on a system."
-    keywords: ["privilege escalation", "administrator", "root", "elevated access", "permissions"]
-  "Defense Evasion (TA0005)":
-    label: "Defense Evasion (TA0005)"
-    tactic_id: "TA0005"
-    description_full: "The adversary is trying to avoid being detected. Defense Evasion consists of techniques that adversaries use to avoid detection throughout their compromise."
-    description_short: "Avoid detection and subvert defensive controls."
-    keywords: ["avoid detection", "disable security", "obfuscation", "masquerading", "trusted process"]
-  "Credential Access (TA0006)":
-    label: "Credential Access (TA0006)"
-    tactic_id: "TA0006"
-    description_full: "The adversary is trying to steal account names and passwords. Credential Access consists of techniques for stealing credentials like account names and passwords."
-    description_short: "Steal account credentials such as names and passwords."
-    keywords: ["credentials", "password", "account name", "keylogging", "credential dumping"]
-  "Discovery (TA0007)":
-    label: "Discovery (TA0007)"
-    tactic_id: "TA0007"
-    description_full: "The adversary is trying to figure out your environment. Discovery consists of techniques an adversary may use to gain knowledge about the system and internal network."
-    description_short: "Learn about systems, networks, and the target environment."
-    keywords: ["system information", "network discovery", "environment", "enumeration", "internal network"]
-  "Lateral Movement (TA0008)":
-    label: "Lateral Movement (TA0008)"
-    tactic_id: "TA0008"
-    description_full: "The adversary is trying to move through your environment. Lateral Movement consists of techniques that adversaries use to enter and control remote systems on a network."
-    description_short: "Move through the environment to control remote systems."
-    keywords: ["lateral movement", "remote system", "internal movement", "remote service", "pivot"]
-  "Collection (TA0009)":
-    label: "Collection (TA0009)"
-    tactic_id: "TA0009"
-    description_full: "The adversary is trying to gather data of interest to their goal. Collection consists of techniques adversaries may use to gather information and the sources information is collected from."
-    description_short: "Gather target data relevant to adversary objectives."
-    keywords: ["collect data", "screenshots", "keyboard input", "email", "browser data"]
-  "Exfiltration (TA0010)":
-    label: "Exfiltration (TA0010)"
-    tactic_id: "TA0010"
-    description_full: "The adversary is trying to steal data. Exfiltration consists of techniques that adversaries may use to remove data from a network, often packaging, compressing, encrypting, or transferring it over command and control channels."
-    description_short: "Remove or steal data from a target environment."
-    keywords: ["exfiltration", "steal data", "transfer data", "compress", "encrypt"]
-  "Command and Control (TA0011)":
-    label: "Command and Control (TA0011)"
-    tactic_id: "TA0011"
-    description_full: "The adversary is trying to communicate with compromised systems to control them. Command and Control consists of techniques that adversaries may use to communicate with systems under their control."
-    description_short: "Communicate with and control compromised systems."
-    keywords: ["command and control", "C2", "compromised system", "communication channel", "network traffic"]
-  "Resource Development (TA0042)":
-    label: "Resource Development (TA0042)"
-    tactic_id: "TA0042"
-    description_full: "The adversary is trying to establish resources they can use to support operations. Resource Development consists of techniques that involve creating, purchasing, compromising, or otherwise obtaining infrastructure, accounts, capabilities, or other resources."
-    description_short: "Establish resources used to support adversary operations."
-    keywords: ["resource development", "infrastructure", "accounts", "capabilities", "operations"]
-  "Reconnaissance (TA0043)":
-    label: "Reconnaissance (TA0043)"
-    tactic_id: "TA0043"
-    description_full: "The adversary is trying to gather information they can use to plan future operations. Reconnaissance consists of techniques that involve adversaries actively or passively gathering information that can be used to support targeting."
-    description_short: "Gather information to plan future adversary operations."
-    keywords: ["reconnaissance", "targeting", "infrastructure", "organization", "information gathering"]
+  Initial Access (TA0001):
+    label: Initial Access (TA0001)
+    tactic_id: TA0001
+    description_full: The adversary is trying to get into your network. Initial Access consists of techniques that use various
+      entry vectors to gain their initial foothold within a network. Techniques used to gain a foothold include targeted spearphishing
+      and exploiting weaknesses on public-facing web servers.
+    description_short: Gain an initial foothold in a target network.
+    keywords:
+      - initial foothold
+      - spearphishing
+      - public-facing application
+      - valid accounts
+      - remote services
+    techniques:
+      - Drive-by Compromise
+      - Exploit Public-Facing Application
+      - External Remote Services
+      - Hardware Additions
+      - Phishing
+      - Replication Through Removable Media
+      - Supply Chain Compromise
+      - Trusted Relationship
+      - Valid Accounts
+  Execution (TA0002):
+    label: Execution (TA0002)
+    tactic_id: TA0002
+    description_full: The adversary is trying to run malicious code. Execution consists of techniques that result in adversary-controlled
+      code running on a local or remote system.
+    description_short: Run adversary-controlled malicious code.
+    keywords:
+      - command
+      - script
+      - malicious code
+      - code execution
+      - remote execution
+    techniques:
+      - Command and Scripting Interpreter
+      - Container Administration Command
+      - Deploy Container
+      - Exploitation for Client Execution
+      - Inter-Process Communication
+      - Native API
+      - Scheduled Task/Job
+      - Shared Modules
+      - Software Deployment Tools
+      - System Services
+      - User Execution
+      - Windows Management Instrumentation
+  Persistence (TA0003):
+    label: Persistence (TA0003)
+    tactic_id: TA0003
+    description_full: The adversary is trying to maintain their foothold. Persistence consists of techniques that adversaries
+      use to keep access to systems across restarts, changed credentials, and other interruptions.
+    description_short: Maintain access across restarts and interruptions.
+    keywords:
+      - maintain access
+      - startup
+      - account
+      - configuration change
+      - foothold
+    techniques:
+      - Account Manipulation
+      - BITS Jobs
+      - Boot or Logon Autostart Execution
+      - Boot or Logon Initialization Scripts
+      - Browser Extensions
+      - Compromise Client Software Binary
+      - Create Account
+      - Create or Modify System Process
+      - Event Triggered Execution
+      - External Remote Services
+      - Hijack Execution Flow
+      - Implant Internal Image
+      - Modify Authentication Process
+      - Office Application Startup
+      - Pre-OS Boot
+      - Scheduled Task/Job
+      - Server Software Component
+      - Traffic Signaling
+      - Valid Accounts
+  Privilege Escalation (TA0004):
+    label: Privilege Escalation (TA0004)
+    tactic_id: TA0004
+    description_full: The adversary is trying to gain higher-level permissions. Privilege Escalation consists of techniques
+      that adversaries use to obtain elevated access, such as administrator, root, or system permissions, after gaining initial
+      access.
+    description_short: Gain higher-level permissions on a system.
+    keywords:
+      - privilege escalation
+      - administrator
+      - root
+      - elevated access
+      - permissions
+    techniques:
+      - Abuse Elevation Control Mechanism
+      - Access Token Manipulation
+      - Boot or Logon Autostart Execution
+      - Boot or Logon Initialization Scripts
+      - Create or Modify System Process
+      - Domain Policy Modification
+      - Escape to Host
+      - Event Triggered Execution
+      - Exploitation for Privilege Escalation
+      - Hijack Execution Flow
+      - Process Injection
+      - Scheduled Task/Job
+      - Valid Accounts
+  Defense Evasion (TA0005):
+    label: Defense Evasion (TA0005)
+    tactic_id: TA0005
+    description_full: The adversary is trying to avoid being detected. Defense Evasion consists of techniques that adversaries
+      use to avoid detection throughout their compromise.
+    description_short: Avoid detection and subvert defensive controls.
+    keywords:
+      - avoid detection
+      - disable security
+      - obfuscation
+      - masquerading
+      - trusted process
+    techniques:
+      - Abuse Elevation Control Mechanism
+      - Access Token Manipulation
+      - BITS Jobs
+      - Build Image on Host
+      - Debugger Evasion
+      - Deobfuscate/Decode Files or Information
+      - Deploy Container
+      - Direct Volume Access
+      - Domain Policy Modification
+      - Execution Guardrails
+      - Exploitation for Defense Evasion
+      - File and Directory Permissions Modification
+      - Hide Artifacts
+      - Hijack Execution Flow
+      - Impair Defenses
+      - Indicator Removal on Host
+      - Indirect Command Execution
+      - Masquerading
+      - Modify Authentication Process
+      - Modify Cloud Compute Infrastructure
+      - Modify Registry
+      - Modify System Image
+      - Network Boundary Bridging
+      - Obfuscated Files or Information
+      - Plist File Modification
+      - Pre-OS Boot
+      - Process Injection
+      - Reflective Code Loading
+      - Rogue Domain Controller
+      - Rootkit
+      - Subvert Trust Controls
+      - System Binary Proxy Execution
+      - System Script Proxy Execution
+      - Template Injection
+      - Traffic Signaling
+      - Trusted Developer Utilities Proxy Execution
+      - Unused/Unsupported Cloud Regions
+      - Use Alternate Authentication Material
+      - Valid Accounts
+      - Virtualization/Sandbox Evasion
+      - Weaken Encryption
+      - XSL Script Processing
+  Credential Access (TA0006):
+    label: Credential Access (TA0006)
+    tactic_id: TA0006
+    description_full: The adversary is trying to steal account names and passwords. Credential Access consists of techniques
+      for stealing credentials like account names and passwords.
+    description_short: Steal account credentials such as names and passwords.
+    keywords:
+      - credentials
+      - password
+      - account name
+      - keylogging
+      - credential dumping
+    techniques:
+      - Adversary-in-the-Middle
+      - Brute Force
+      - Credentials from Password Stores
+      - Exploitation for Credential Access
+      - Forced Authentication
+      - Forge Web Credentials
+      - Input Capture
+      - Modify Authentication Process
+      - Multi-Factor Authentication Interception
+      - Multi-Factor Authentication Request Generation
+      - Network Sniffing
+      - OS Credential Dumping
+      - Steal Application Access Token
+      - Steal or Forge Kerberos Tickets
+      - Steal Web Session Cookie
+      - Unsecured Credentials
+  Discovery (TA0007):
+    label: Discovery (TA0007)
+    tactic_id: TA0007
+    description_full: The adversary is trying to figure out your environment. Discovery consists of techniques an adversary
+      may use to gain knowledge about the system and internal network.
+    description_short: Learn about systems, networks, and the target environment.
+    keywords:
+      - system information
+      - network discovery
+      - environment
+      - enumeration
+      - internal network
+    techniques:
+      - Account Discovery
+      - Application Window Discovery
+      - Browser Bookmark Discovery
+      - Cloud Infrastructure Discovery
+      - Cloud Service Dashboard
+      - Cloud Service Discovery
+      - Cloud Storage Object Discovery
+      - Container and Resource Discovery
+      - Debugger Evasion
+      - Domain Trust Discovery
+      - File and Directory Discovery
+      - Group Policy Discovery
+      - Network Service Discovery
+      - Network Share Discovery
+      - Network Sniffing
+      - Password Policy Discovery
+      - Peripheral Device Discovery
+      - Permission Groups Discovery
+      - Process Discovery
+      - Query Registry
+      - Remote System Discovery
+      - Software Discovery
+      - System Information Discovery
+      - System Location Discovery
+      - System Network Configuration Discovery
+      - System Network Connections Discovery
+      - System Owner/User Discovery
+      - System Service Discovery
+      - System Time Discovery
+      - Virtualization/Sandbox Evasion
+  Lateral Movement (TA0008):
+    label: Lateral Movement (TA0008)
+    tactic_id: TA0008
+    description_full: The adversary is trying to move through your environment. Lateral Movement consists of techniques that
+      adversaries use to enter and control remote systems on a network.
+    description_short: Move through the environment to control remote systems.
+    keywords:
+      - lateral movement
+      - remote system
+      - internal movement
+      - remote service
+      - pivot
+    techniques:
+      - Exploitation of Remote Services
+      - Internal Spearphishing
+      - Lateral Tool Transfer
+      - Remote Service Session Hijacking
+      - Remote Services
+      - Replication Through Removable Media
+      - Software Deployment Tools
+      - Taint Shared Content
+      - Use Alternate Authentication Material
+  Collection (TA0009):
+    label: Collection (TA0009)
+    tactic_id: TA0009
+    description_full: The adversary is trying to gather data of interest to their goal. Collection consists of techniques
+      adversaries may use to gather information and the sources information is collected from.
+    description_short: Gather target data relevant to adversary objectives.
+    keywords:
+      - collect data
+      - screenshots
+      - keyboard input
+      - email
+      - browser data
+    techniques:
+      - Adversary-in-the-Middle
+      - Archive Collected Data
+      - Audio Capture
+      - Automated Collection
+      - Browser Session Hijacking
+      - Clipboard Data
+      - Data from Cloud Storage Object
+      - Data from Configuration Repository
+      - Data from Information Repositories
+      - Data from Local System
+      - Data from Network Shared Drive
+      - Data from Removable Media
+      - Data Staged
+      - Email Collection
+      - Input Capture
+      - Screen Capture
+      - Video Capture
+  Exfiltration (TA0010):
+    label: Exfiltration (TA0010)
+    tactic_id: TA0010
+    description_full: The adversary is trying to steal data. Exfiltration consists of techniques that adversaries may use
+      to remove data from a network, often packaging, compressing, encrypting, or transferring it over command and control
+      channels.
+    description_short: Remove or steal data from a target environment.
+    keywords:
+      - exfiltration
+      - steal data
+      - transfer data
+      - compress
+      - encrypt
+    techniques:
+      - Automated Exfiltration
+      - Data Transfer Size Limits
+      - Exfiltration Over Alternative Protocol
+      - Exfiltration Over C2 Channel
+      - Exfiltration Over Other Network Medium
+      - Exfiltration Over Physical Medium
+      - Exfiltration Over Web Service
+      - Scheduled Transfer
+      - Transfer Data to Cloud Account
+  Command and Control (TA0011):
+    label: Command and Control (TA0011)
+    tactic_id: TA0011
+    description_full: The adversary is trying to communicate with compromised systems to control them. Command and Control
+      consists of techniques that adversaries may use to communicate with systems under their control.
+    description_short: Communicate with and control compromised systems.
+    keywords:
+      - command and control
+      - C2
+      - compromised system
+      - communication channel
+      - network traffic
+    techniques:
+      - Application Layer Protocol
+      - Communication Through Removable Media
+      - Data Encoding
+      - Data Obfuscation
+      - Dynamic Resolution
+      - Encrypted Channel
+      - Fallback Channels
+      - Ingress Tool Transfer
+      - Multi-Stage Channels
+      - Non-Application Layer Protocol
+      - Non-Standard Port
+      - Protocol Tunneling
+      - Proxy
+      - Remote Access Software
+      - Traffic Signaling
+      - Web Service
+  Resource Development (TA0042):
+    label: Resource Development (TA0042)
+    tactic_id: TA0042
+    description_full: The adversary is trying to establish resources they can use to support operations. Resource Development
+      consists of techniques that involve creating, purchasing, compromising, or otherwise obtaining infrastructure, accounts,
+      capabilities, or other resources.
+    description_short: Establish resources used to support adversary operations.
+    keywords:
+      - resource development
+      - infrastructure
+      - accounts
+      - capabilities
+      - operations
+    techniques:
+      - Acquire Infrastructure
+      - Compromise Accounts
+      - Compromise Infrastructure
+      - Develop Capabilities
+      - Establish Accounts
+      - Obtain Capabilities
+      - Stage Capabilities
+  Reconnaissance (TA0043):
+    label: Reconnaissance (TA0043)
+    tactic_id: TA0043
+    description_full: The adversary is trying to gather information they can use to plan future operations. Reconnaissance
+      consists of techniques that involve adversaries actively or passively gathering information that can be used to support
+      targeting.
+    description_short: Gather information to plan future adversary operations.
+    keywords:
+      - reconnaissance
+      - targeting
+      - infrastructure
+      - organization
+      - information gathering
+    techniques:
+      - Active Scanning
+      - Gather Victim Host Information
+      - Gather Victim Identity Information
+      - Gather Victim Network Information
+      - Gather Victim Org Information
+      - Phishing for Information
+      - Search Closed Sources
+      - Search Open Technical Databases
+      - Search Open Websites/Domains
+      - Search Victim-Owned Websites

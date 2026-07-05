@@ -58,7 +58,7 @@ class IntegrationTests(unittest.TestCase):
                     "format": "yaml",
                     "label_field": "label",
                     "id_field": "tactic_id",
-                    "text_field": "description_full",
+                    "text_fields": ["keywords", "techniques"],
                     "embedder_backend": "hashing",
                     "output_dim": 768,
                     "normalize": True,
@@ -138,6 +138,11 @@ class IntegrationTests(unittest.TestCase):
             self.assertTrue((run_dir / "plots" / "umap_h_space.png").is_file())
             self.assertTrue((run_dir / "plots" / "umap_gated_c_space.png").is_file())
             self.assertTrue((run_dir / "reports" / "report.md").is_file())
+            log_text = (run_dir / "logs" / "experiment.log").read_text(encoding="utf-8")
+            self.assertIn("Training started", log_text)
+            self.assertIn("Epoch 1/2", log_text)
+            self.assertIn("train_loss=", log_text)
+            self.assertIn("val_loss=", log_text)
 
             history = pd.read_csv(run_dir / "metrics" / "training_history.csv")
             self.assertIn("val_h_only_mse", history.columns)

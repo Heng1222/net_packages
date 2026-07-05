@@ -42,7 +42,9 @@ conditions:
   format: "yaml"
   label_field: "label"
   id_field: "tactic_id"
-  text_field: "description_full"
+  text_fields:
+    - "keywords"
+    - "techniques"
   embedder_backend: "sentence_transformers"
   embedder_model_name: "nomic-ai/modernbert-embed-base"
   embedder_model_revision: "d556a88e332558790b210f7bdbe87da2fa94a8d8"

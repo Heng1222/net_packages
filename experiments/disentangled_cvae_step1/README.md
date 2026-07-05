@@ -30,14 +30,14 @@ The cached prepared dataset contains:
 - `metadata.csv`: sample id, metadata label, time, payload hash, ISP/protocol metadata
 - `manifest.json`: source/config fingerprint used to decide whether cache can be reused
 
-The condition embeddings are 768-dimensional vectors produced by the same `nomic-ai/modernbert-embed-base` model. They are real CVAE condition input in this version. For every sample, the encoder receives the payload embedding plus the full non-Normal condition matrix. The encoder learns `H` and one gate per condition. The decoder receives `H` plus the gated condition embeddings and reconstructs `x`.
+The condition embeddings are 768-dimensional vectors produced by the same `nomic-ai/modernbert-embed-base` model. They are real CVAE condition input in this version. By default, each condition is still one tactic, but its text is now built from tactic-level keywords plus the complete top-level MITRE Enterprise ATT&CK v11.3 technique names under that tactic. Technique IDs and sub-techniques are omitted from the condition text. This avoids embedding the full prose descriptions with many shared filler words and should make the condition cosine similarity diagnostic more informative. For every sample, the encoder receives the payload embedding plus the full non-Normal condition matrix. The encoder learns `H` and one gate per condition. The decoder receives `H` plus the gated condition embeddings and reconstructs `x`.
 
 Token length check on `clean_payload_list` with the ModernBERT tokenizer showed that almost all Step1 rows fit in 8192 tokens: median 94, p99 332, p99.9 650. Only 7 of 409,699 rows exceeded 8192 tokens, with the maximum at 45,700. Therefore the pipeline does not chunk ordinary rows. It chunks only overflow rows and averages their chunk embeddings so full-data preparation does not fail or silently truncate those rare long payloads.
 
 ```text
 Payload text
   -> ModernBERT payload embedding x [768]
-Condition descriptions
+Condition keywords + technique names
   -> ModernBERT condition embeddings C_all [num_conditions, 768]
 
 Encoder input:
@@ -121,7 +121,7 @@ Each run writes to `outputs/disentangled_cvae_step1/<timestamp>/`:
 
 - `config_resolved.yaml`
 - `environment.json`
-- `logs/`
+- `logs/experiment.log`: stage progress plus per-epoch train/validation loss
 - `checkpoints/disentangled_cvae.pt`
 - `metrics/training_history.csv`
 - `metrics/loss_summary.json`

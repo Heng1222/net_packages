@@ -50,7 +50,55 @@ def _read_condition_records(path: Path, fmt: str | None) -> tuple[dict[str, Any]
     return metadata, records
 
 
-def _cache_key(config: dict[str, Any], labels: list[str], texts: list[str]) -> str:
+def _record_value(record: dict[str, Any], field: str) -> Any:
+    value: Any = record
+    for part in field.split("."):
+        if not isinstance(value, dict) or part not in value:
+            return None
+        value = value[part]
+    return value
+
+
+def _flatten_text(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        stripped = value.strip()
+        return [stripped] if stripped else []
+    if isinstance(value, (list, tuple, set)):
+        parts: list[str] = []
+        for item in value:
+            parts.extend(_flatten_text(item))
+        return parts
+    stripped = str(value).strip()
+    return [stripped] if stripped else []
+
+
+def _condition_text_fields(config: dict[str, Any]) -> list[str]:
+    fields = config.get("text_fields")
+    if fields is None:
+        fields = [config.get("text_field", "description_full")]
+    elif isinstance(fields, str):
+        fields = [fields]
+    fields = [str(field) for field in fields if str(field).strip()]
+    if not fields:
+        raise ValueError("conditions.text_fields must contain at least one field.")
+    return fields
+
+
+def _condition_text(record: dict[str, Any], fields: list[str]) -> tuple[str, list[str]]:
+    terms: list[str] = []
+    missing: list[str] = []
+    for field in fields:
+        value = _record_value(record, field)
+        if value is None:
+            missing.append(field)
+            continue
+        terms.extend(_flatten_text(value))
+    return ", ".join(terms), missing
+
+
+def _cache_key(config: dict[str, Any], labels: list[str], texts: list[str], text_fields: list[str]) -> str:
     digest = hashlib.sha256()
     for label, text in zip(labels, texts, strict=True):
         digest.update(label.encode("utf-8"))
@@ -61,10 +109,10 @@ def _cache_key(config: dict[str, Any], labels: list[str], texts: list[str]) -> s
         "embedder_backend",
         "embedder_model_name",
         "embedder_model_revision",
-        "text_field",
         "normalize",
     ):
         digest.update(f"{key}={config.get(key)}".encode("utf-8"))
+    digest.update(json.dumps({"text_fields": text_fields}, sort_keys=True).encode("utf-8"))
     return digest.hexdigest()[:24]
 
 
@@ -79,7 +127,7 @@ def load_condition_embeddings(
         raise FileNotFoundError(f"Condition file not found: {path}")
     metadata, records = _read_condition_records(path, config.get("format"))
     label_field = config.get("label_field", "label")
-    text_field = config.get("text_field", "description_full")
+    text_fields = _condition_text_fields(config)
     exclude = set(map(str, config.get("exclude_labels", []) or []))
     by_label = {str(record.get(label_field, record.get("_key", ""))): record for record in records}
     if observed_labels is None:
@@ -90,20 +138,32 @@ def load_condition_embeddings(
     if missing:
         raise KeyError(f"Condition file is missing labels required by Step1: {missing}")
 
-    texts = [str(by_label[label].get(text_field, "")) for label in requested]
+    texts: list[str] = []
+    missing_fields: dict[str, list[str]] = {}
+    for label in requested:
+        text, missing = _condition_text(by_label[label], text_fields)
+        texts.append(text)
+        if missing:
+            missing_fields[label] = missing
+    if missing_fields:
+        raise KeyError(f"Condition text field(s) are missing: {missing_fields}")
     empty = [label for label, text in zip(requested, texts, strict=True) if not text]
     if empty:
-        raise KeyError(f"Condition text field '{text_field}' is empty for: {empty}")
+        raise KeyError(f"Condition text fields {text_fields} are empty for: {empty}")
 
     cache_dir.mkdir(parents=True, exist_ok=True)
-    key = _cache_key(config, requested, texts)
+    key = _cache_key(config, requested, texts, text_fields)
     cache_path = cache_dir / f"conditions_{key}.npz"
     meta_path = cache_dir / f"conditions_{key}.json"
     if cache_path.is_file():
         with np.load(cache_path, allow_pickle=False) as archive:
             matrix = archive["matrix"].astype(np.float32)
             labels = archive["labels"].astype(str).tolist()
-        return ConditionEmbeddings(labels, matrix, {"cache_hit": True, "cache_path": str(cache_path), **metadata})
+        return ConditionEmbeddings(
+            labels,
+            matrix,
+            {"cache_hit": True, "cache_path": str(cache_path), "text_fields": text_fields, **metadata},
+        )
 
     embedder_config = {
         "backend": config.get("embedder_backend", "sentence_transformers"),
@@ -122,6 +182,8 @@ def load_condition_embeddings(
                 "labels": requested,
                 "cache_path": str(cache_path),
                 "embedding_dim": int(matrix.shape[1]),
+                "text_fields": text_fields,
+                "text_preview": dict(zip(requested, texts, strict=True)),
                 "condition_file_metadata": metadata,
             },
             indent=2,
@@ -129,7 +191,11 @@ def load_condition_embeddings(
         ),
         encoding="utf-8",
     )
-    return ConditionEmbeddings(requested, matrix, {"cache_hit": False, "cache_path": str(cache_path), **metadata})
+    return ConditionEmbeddings(
+        requested,
+        matrix,
+        {"cache_hit": False, "cache_path": str(cache_path), "text_fields": text_fields, **metadata},
+    )
 
 
 def cosine_similarity_matrix(matrix: np.ndarray) -> np.ndarray:

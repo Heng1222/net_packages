@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -46,6 +48,16 @@ class MemmapDataset(Dataset):
             torch.from_numpy(np.asarray(self.x[index], dtype=np.float32)),
             torch.tensor(index, dtype=torch.long),
         )
+
+
+def _format_elapsed(seconds: float) -> str:
+    minutes, remainder = divmod(int(seconds), 60)
+    hours, minutes = divmod(minutes, 60)
+    if hours:
+        return f"{hours:d}h{minutes:02d}m{remainder:02d}s"
+    if minutes:
+        return f"{minutes:d}m{remainder:02d}s"
+    return f"{remainder:d}s"
 
 
 def make_loader(
@@ -97,6 +109,7 @@ def train_model(
     device: torch.device,
     checkpoint_path: Path,
     seed: int,
+    logger: logging.Logger | None = None,
 ) -> TrainingResult:
     model.to(device)
     conditions = torch.from_numpy(np.asarray(condition_matrix, dtype=np.float32)).to(device)
@@ -125,7 +138,24 @@ def train_model(
     best_epoch = 0
     stale = 0
     history: list[dict[str, float]] = []
-    for epoch in range(1, int(training["max_epochs"]) + 1):
+    max_epochs = int(training["max_epochs"])
+    patience = int(training["early_stopping_patience"])
+    batch_size = int(training["batch_size"])
+    if logger is not None:
+        logger.info(
+            "Training started: epochs=%d batch_size=%d train_rows=%d val_rows=%d "
+            "train_batches=%d val_batches=%d conditions=%d",
+            max_epochs,
+            batch_size,
+            len(split.train),
+            len(split.val) if len(split.val) else len(split.train),
+            len(train_loader),
+            len(val_loader),
+            conditions.shape[0],
+        )
+    started_at = time.perf_counter()
+    for epoch in range(1, max_epochs + 1):
+        epoch_started_at = time.perf_counter()
         model.train()
         train_totals = {key: 0.0 for key in TRACKED}
         train_count = 0
@@ -165,18 +195,50 @@ def train_model(
         row.update({f"val_{key}": value / max(val_count, 1) for key, value in val_aux_totals.items()})
         history.append(row)
         val_loss = row["val_loss"]
-        if val_loss < best - 1e-10:
+        improved = val_loss < best - 1e-10
+        status = ""
+        if improved:
             best = val_loss
             best_epoch = epoch
             stale = 0
             save_checkpoint(checkpoint_path, model, optimizer, model_config, epoch, best)
+            status = "best"
         else:
             stale += 1
-            if stale >= int(training["early_stopping_patience"]):
-                break
+            status = f"stale={stale}/{patience}"
+        if logger is not None:
+            logger.info(
+                "Epoch %d/%d | train_loss=%.6f train_recon_mse=%.6f | "
+                "val_loss=%.6f val_recon_mse=%.6f val_h_only_mse=%.6f val_c_only_mse=%.6f | "
+                "best_val_loss=%.6f best_epoch=%d %s | epoch_time=%s elapsed=%s",
+                epoch,
+                max_epochs,
+                row["train_loss"],
+                row["train_recon_mse"],
+                row["val_loss"],
+                row["val_recon_mse"],
+                row["val_h_only_mse"],
+                row["val_c_only_mse"],
+                best,
+                best_epoch,
+                status,
+                _format_elapsed(time.perf_counter() - epoch_started_at),
+                _format_elapsed(time.perf_counter() - started_at),
+            )
+        if not improved and stale >= patience:
+            if logger is not None:
+                logger.info("Early stopping at epoch %d after %d stale epoch(s).", epoch, stale)
+            break
     checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
     model.load_state_dict(checkpoint["model_state"])
     pd.DataFrame(history).to_csv(checkpoint_path.parent.parent / "metrics" / "training_history.csv", index=False)
+    if logger is not None:
+        logger.info(
+            "Training finished: best_epoch=%d best_val_loss=%.6f history_rows=%d",
+            best_epoch,
+            best,
+            len(history),
+        )
     return TrainingResult(history, best_epoch, best)
 
 

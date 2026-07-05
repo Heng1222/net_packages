@@ -1,0 +1,126 @@
+from __future__ import annotations
+
+import json
+import re
+import tempfile
+import unittest
+from pathlib import Path
+
+import numpy as np
+import torch
+import yaml
+
+from experiments.disentangled_cvae_step1.conditions import load_condition_embeddings
+from experiments.disentangled_cvae_step1.embedders import HashingTextEmbedder
+
+
+CONDITION_FILE = Path("experiments/disentangled_cvae_step1/conditions/mitre_attack_v11_3_step1.yaml")
+
+
+class ConditionEmbeddingTests(unittest.TestCase):
+    def test_text_fields_join_keywords_and_techniques(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            condition_path = root / "conditions.yaml"
+            condition_path.write_text(
+                yaml.safe_dump(
+                    {
+                        "tactics": {
+                            "B": {
+                                "label": "B (TA0002)",
+                                "keywords": ["gamma"],
+                                "techniques": ["Technique Two (T1002)", "Technique Three (T1003)"],
+                            },
+                            "A": {
+                                "label": "A (TA0001)",
+                                "keywords": ["alpha", "beta"],
+                                "techniques": ["Technique One (T1001)"],
+                            },
+                        }
+                    },
+                    sort_keys=False,
+                ),
+                encoding="utf-8",
+            )
+            config = {
+                "path": str(condition_path),
+                "format": "yaml",
+                "label_field": "label",
+                "text_fields": ["keywords", "techniques"],
+                "embedder_backend": "hashing",
+                "output_dim": 8,
+                "normalize": True,
+            }
+
+            result = load_condition_embeddings(config, None, torch.device("cpu"), root / "cache")
+
+            self.assertEqual(result.labels, ["A (TA0001)", "B (TA0002)"])
+            expected = HashingTextEmbedder(8, True).encode(
+                [
+                    "alpha, beta, Technique One (T1001)",
+                    "gamma, Technique Two (T1002), Technique Three (T1003)",
+                ]
+            )
+            np.testing.assert_allclose(result.matrix, expected)
+            self.assertEqual(result.metadata["text_fields"], ["keywords", "techniques"])
+
+            meta_path = Path(str(result.metadata["cache_path"])).with_suffix(".json")
+            cache_meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            self.assertEqual(cache_meta["text_preview"]["A (TA0001)"], "alpha, beta, Technique One (T1001)")
+
+            second = load_condition_embeddings(config, None, torch.device("cpu"), root / "cache")
+            self.assertTrue(second.metadata["cache_hit"])
+            np.testing.assert_allclose(second.matrix, expected)
+
+    def test_missing_text_field_raises(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            condition_path = root / "conditions.yaml"
+            condition_path.write_text(
+                yaml.safe_dump(
+                    {"tactics": {"A": {"label": "A (TA0001)", "keywords": ["alpha"]}}},
+                    sort_keys=False,
+                ),
+                encoding="utf-8",
+            )
+            config = {
+                "path": str(condition_path),
+                "format": "yaml",
+                "label_field": "label",
+                "text_fields": ["keywords", "techniques"],
+                "embedder_backend": "hashing",
+                "output_dim": 8,
+                "normalize": True,
+            }
+
+            with self.assertRaisesRegex(KeyError, "techniques"):
+                load_condition_embeddings(config, None, torch.device("cpu"), root / "cache")
+
+    def test_default_condition_file_uses_complete_technique_names_without_ids(self) -> None:
+        data = yaml.safe_load(CONDITION_FILE.read_text(encoding="utf-8"))
+        expected_counts = {
+            "Initial Access (TA0001)": 9,
+            "Execution (TA0002)": 12,
+            "Persistence (TA0003)": 19,
+            "Privilege Escalation (TA0004)": 13,
+            "Defense Evasion (TA0005)": 42,
+            "Credential Access (TA0006)": 16,
+            "Discovery (TA0007)": 30,
+            "Lateral Movement (TA0008)": 9,
+            "Collection (TA0009)": 17,
+            "Exfiltration (TA0010)": 9,
+            "Command and Control (TA0011)": 16,
+            "Resource Development (TA0042)": 7,
+            "Reconnaissance (TA0043)": 10,
+        }
+
+        for label, expected_count in expected_counts.items():
+            techniques = data["tactics"][label]["techniques"]
+            self.assertEqual(len(techniques), expected_count, msg=label)
+            self.assertEqual(len(techniques), len(set(techniques)), msg=label)
+            for technique in techniques:
+                self.assertIsNone(re.search(r"\(T\d", technique), msg=f"{label}: {technique}")
+
+
+if __name__ == "__main__":
+    unittest.main()

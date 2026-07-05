@@ -95,11 +95,14 @@ def run_train(config: dict, run_dir: Path, device: torch.device, logger: logging
     x_raw, metadata = load_prepared(prepared_dir)
     logger.info("Loaded prepared dataset rows=%d dim=%d", len(x_raw), x_raw.shape[1])
 
+    logger.info("Creating time split")
     split = make_time_split(metadata, config["data"]["split"])
+    logger.info("Split sizes: train=%d val=%d test=%d", len(split.train), len(split.val), len(split.test))
     _make_split_assignments(metadata, split).to_csv(run_dir / "metrics" / "split_assignments.csv", index=False)
     write_json(leakage_report(metadata, split), run_dir / "metrics" / "leakage_report.json")
 
     if config.get("preprocessing", {}).get("normalization", "standard") == "standard":
+        logger.info("Standardizing payload embeddings")
         x = standardize_to_memmap(
             x_raw,
             split,
@@ -108,12 +111,26 @@ def run_train(config: dict, run_dir: Path, device: torch.device, logger: logging
             int(config.get("preprocessing", {}).get("batch_size", 20000)),
         )
     elif config.get("preprocessing", {}).get("normalization", "standard") == "none":
+        logger.info("Using raw payload embeddings without standardization")
         x = x_raw
     else:
         raise ValueError("This experiment supports preprocessing.normalization='standard' or 'none'.")
 
+    condition_fields = config["conditions"].get("text_fields", [config["conditions"].get("text_field", "description_full")])
+    logger.info(
+        "Loading condition embeddings from %s using text fields=%s",
+        config["conditions"]["path"],
+        condition_fields,
+    )
     conditions = load_condition_embeddings(
         config["conditions"], None, device, run_dir / "embeddings"
+    )
+    logger.info(
+        "Loaded condition embeddings: labels=%d dim=%d cache_hit=%s cache=%s",
+        len(conditions.labels),
+        conditions.dimension,
+        conditions.metadata.get("cache_hit"),
+        conditions.metadata.get("cache_path"),
     )
     if conditions.dimension != int(config["model"]["condition_dim"]):
         raise ValueError(
@@ -129,6 +146,13 @@ def run_train(config: dict, run_dir: Path, device: torch.device, logger: logging
     )
 
     model = DisentangledConditionalVAE.from_config(model_config)
+    logger.info(
+        "Initialized DisentangledConditionalVAE: input_dim=%d residual_dim=%d condition_count=%d condition_dim=%d",
+        int(model_config["input_dim"]),
+        int(model_config["residual_dim"]),
+        int(model_config["condition_count"]),
+        int(model_config["condition_dim"]),
+    )
     checkpoint = run_dir / "checkpoints" / "disentangled_cvae.pt"
     result = train_model(
         model,
@@ -140,13 +164,16 @@ def run_train(config: dict, run_dir: Path, device: torch.device, logger: logging
         device,
         checkpoint,
         int(config.get("seed", 42)),
+        logger,
     )
+    logger.info("Training summary: best_epoch=%d best_val_loss=%.6f", result.best_epoch, result.best_val_loss)
     write_json(
         {"best_epoch": result.best_epoch, "best_val_loss": result.best_val_loss},
         run_dir / "metrics" / "training_summary.json",
     )
     plot_training_reconstruction_losses(result.history, run_dir / "plots" / "training_reconstruction_losses.png")
 
+    logger.info("Extracting test outputs rows=%d", len(split.test))
     test_outputs = extract_batches(
         model,
         x,
@@ -161,6 +188,7 @@ def run_train(config: dict, run_dir: Path, device: torch.device, logger: logging
         test_outputs["gates"],
         conditions.labels,
     )
+    logger.info("Writing test predictions and condition summaries")
     test_predictions.to_csv(run_dir / "metrics" / "testset_condition_predictions.csv", index=False)
     write_testset_subset(test_predictions, run_dir / "metrics" / "testset_subset_100.csv")
     write_json(test_outputs["loss_summary"], run_dir / "metrics" / "loss_summary.json")
@@ -173,6 +201,7 @@ def run_train(config: dict, run_dir: Path, device: torch.device, logger: logging
         run_dir / "metrics" / "condition_ablation_delta_mse_summary.csv",
     )
 
+    logger.info("Writing condition cosine similarity diagnostics")
     write_similarity_matrix(
         conditions.labels,
         conditions.matrix,
@@ -186,6 +215,7 @@ def run_train(config: dict, run_dir: Path, device: torch.device, logger: logging
     )
 
     if config.get("evaluation", {}).get("run_visualization", True):
+        logger.info("Rendering latent-space visualizations")
         predicted_conditions = test_predictions["predicted_condition"].to_numpy()
         category_order = [*conditions.labels, AMBIGUOUS_LABEL]
         plot_umap_projection(
@@ -213,6 +243,7 @@ def run_train(config: dict, run_dir: Path, device: torch.device, logger: logging
             category_order,
         )
 
+    logger.info("Writing report")
     write_report(run_dir, metadata, split, conditions.labels, test_outputs["loss_summary"])
 
 

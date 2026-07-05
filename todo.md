@@ -134,6 +134,7 @@ gate 高，才比較能解釋成 payload 和該 condition 有語意關係。
 - contrastive negatives 要包含 hard negatives，例如 command injection vs SQL injection、path probing vs sensitive file access。
 - 不要只用 random negatives，否則 alignment 任務太簡單，實際解偶仍可能失敗。
 - 如果 embedding model 對 payload token 理解很差，可能需要 domain-specific fine-tuning 或 payload-specific encoder。
+- 如果後續能夠有標註資料，可以參考使用InfoNCE loss 來做instance-level的對齊
 
 ### 驗收指標
 

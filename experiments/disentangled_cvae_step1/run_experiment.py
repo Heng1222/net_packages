@@ -132,6 +132,16 @@ def run_train(config: dict, run_dir: Path, device: torch.device, logger: logging
         conditions.metadata.get("cache_hit"),
         conditions.metadata.get("cache_path"),
     )
+    raw_cosine = conditions.metadata.get("raw_condition_cosine", {})
+    transformed_cosine = conditions.metadata.get("transformed_condition_cosine", {})
+    logger.info(
+        "Condition cosine offdiag: raw mean=%.4f max=%.4f | model-used mean=%.4f max=%.4f | geometry=%s",
+        float(raw_cosine.get("offdiag_mean", 0.0)),
+        float(raw_cosine.get("offdiag_max", 0.0)),
+        float(transformed_cosine.get("offdiag_mean", 0.0)),
+        float(transformed_cosine.get("offdiag_max", 0.0)),
+        conditions.metadata.get("condition_geometry"),
+    )
     if conditions.dimension != int(config["model"]["condition_dim"]):
         raise ValueError(
             f"Condition dim {conditions.dimension} does not match condition_dim={config['model']['condition_dim']}."
@@ -139,11 +149,14 @@ def run_train(config: dict, run_dir: Path, device: torch.device, logger: logging
     model_config = dict(config["model"])
     model_config["condition_count"] = len(conditions.labels)
     model_config["condition_dim"] = conditions.dimension
+    raw_condition_matrix = conditions.raw_matrix if conditions.raw_matrix is not None else conditions.matrix
     np.savez_compressed(
         run_dir / "embeddings" / "condition_embeddings.npz",
         labels=np.asarray(conditions.labels, dtype=str),
         matrix=conditions.matrix,
+        raw_matrix=raw_condition_matrix,
     )
+    write_json(conditions.metadata, run_dir / "embeddings" / "condition_embeddings_metadata.json")
 
     model = DisentangledConditionalVAE.from_config(model_config)
     logger.info(
@@ -204,6 +217,17 @@ def run_train(config: dict, run_dir: Path, device: torch.device, logger: logging
     logger.info("Writing condition cosine similarity diagnostics")
     write_similarity_matrix(
         conditions.labels,
+        raw_condition_matrix,
+        run_dir / "metrics" / "condition_raw_cosine_similarity.csv",
+    )
+    plot_condition_similarity_heatmap(
+        conditions.labels,
+        raw_condition_matrix,
+        run_dir / "plots" / "condition_raw_cosine_similarity.png",
+        "Raw condition cosine similarity",
+    )
+    write_similarity_matrix(
+        conditions.labels,
         conditions.matrix,
         run_dir / "metrics" / "condition_cosine_similarity.csv",
     )
@@ -211,7 +235,7 @@ def run_train(config: dict, run_dir: Path, device: torch.device, logger: logging
         conditions.labels,
         conditions.matrix,
         run_dir / "plots" / "condition_cosine_similarity.png",
-        "Condition cosine similarity",
+        "Model-used condition cosine similarity",
     )
 
     if config.get("evaluation", {}).get("run_visualization", True):
@@ -244,7 +268,7 @@ def run_train(config: dict, run_dir: Path, device: torch.device, logger: logging
         )
 
     logger.info("Writing report")
-    write_report(run_dir, metadata, split, conditions.labels, test_outputs["loss_summary"])
+    write_report(run_dir, metadata, split, conditions.labels, test_outputs["loss_summary"], conditions.metadata)
 
 
 def write_report(
@@ -253,7 +277,11 @@ def write_report(
     split,
     condition_labels: list[str],
     loss_summary: dict,
+    condition_metadata: dict | None = None,
 ) -> None:
+    condition_metadata = condition_metadata or {}
+    raw_cosine = condition_metadata.get("raw_condition_cosine", {})
+    transformed_cosine = condition_metadata.get("transformed_condition_cosine", {})
     lines = [
         "# Step1 Disentangled CVAE Report",
         "",
@@ -269,6 +297,18 @@ def write_report(
         "",
         *[f"- {label}" for label in condition_labels],
         "",
+        "## Condition Geometry",
+        "",
+        f"- Geometry: `{condition_metadata.get('condition_geometry', {'method': 'none'})}`",
+        (
+            "- Raw cosine offdiag mean/max: "
+            f"{raw_cosine.get('offdiag_mean')} / {raw_cosine.get('offdiag_max')}"
+        ),
+        (
+            "- Model-used cosine offdiag mean/max: "
+            f"{transformed_cosine.get('offdiag_mean')} / {transformed_cosine.get('offdiag_max')}"
+        ),
+        "",
         "## Reconstruction",
         "",
         f"- Test full reconstruction MSE: {loss_summary.get('recon_mse')}",
@@ -280,6 +320,7 @@ def write_report(
         [
             "## Figures",
             "",
+            "- `plots/condition_raw_cosine_similarity.png`",
             "- `plots/condition_cosine_similarity.png`",
             "- `plots/training_reconstruction_losses.png`",
             "- `plots/umap_original_space.png`",

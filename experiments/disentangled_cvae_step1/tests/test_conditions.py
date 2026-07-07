@@ -10,7 +10,11 @@ import numpy as np
 import torch
 import yaml
 
-from experiments.disentangled_cvae_step1.conditions import load_condition_embeddings
+from experiments.disentangled_cvae_step1.conditions import (
+    apply_condition_geometry,
+    cosine_similarity_matrix,
+    load_condition_embeddings,
+)
 from experiments.disentangled_cvae_step1.embedders import HashingTextEmbedder
 
 
@@ -71,6 +75,38 @@ class ConditionEmbeddingTests(unittest.TestCase):
             second = load_condition_embeddings(config, None, torch.device("cpu"), root / "cache")
             self.assertTrue(second.metadata["cache_hit"])
             np.testing.assert_allclose(second.matrix, expected)
+
+    def test_common_component_geometry_reduces_shared_offset_similarity(self) -> None:
+        raw = np.asarray(
+            [
+                [10.0, 1.0, 0.0, 0.0],
+                [10.0, 0.0, 1.0, 0.0],
+                [10.0, 0.0, 0.0, 1.0],
+            ],
+            dtype=np.float32,
+        )
+
+        transformed, metadata = apply_condition_geometry(
+            raw,
+            {
+                "method": "common_component_removal",
+                "center": True,
+                "remove_top_components": 0,
+                "normalize": True,
+                "strength": 1.0,
+            },
+        )
+
+        raw_similarity = cosine_similarity_matrix(raw)
+        transformed_similarity = cosine_similarity_matrix(transformed)
+        raw_offdiag = raw_similarity[~np.eye(raw_similarity.shape[0], dtype=bool)]
+        transformed_offdiag = transformed_similarity[~np.eye(transformed_similarity.shape[0], dtype=bool)]
+        self.assertGreater(float(raw_offdiag.mean()), 0.95)
+        self.assertLess(float(transformed_offdiag.mean()), 0.0)
+        self.assertEqual(transformed.shape, raw.shape)
+        self.assertEqual(metadata["condition_geometry"]["method"], "common_component_removal")
+        self.assertGreater(metadata["raw_condition_cosine"]["offdiag_mean"], 0.95)
+        self.assertLess(metadata["transformed_condition_cosine"]["offdiag_mean"], 0.0)
 
     def test_missing_text_field_raises(self) -> None:
         with tempfile.TemporaryDirectory() as folder:

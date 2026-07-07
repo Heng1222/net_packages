@@ -16,65 +16,9 @@
 - 一般 embedding model 不保證 raw/semi-structured payload embedding 與 MITRE tactic description embedding 已經在同一個安全語意空間中對齊。
 - reconstruction 做得好，不等於 condition 分解語意正確。
 
-## Step 1. 重新定義 Condition 粒度
+> 目前先保留既有 condition set；condition schema 與粒度調整不列入本 TODO。
 
-### 要修正什麼
-
-目前 condition 主要來自 MITRE tactic-level 描述，例如 Reconnaissance、Execution、Persistence。這種粒度對 payload-level data 可能太抽象。後續應改成或補充更接近 payload 可觀測特徵的 behavior-level conditions。
-
-建議 condition 粒度範例：
-
-- path probing
-- directory traversal
-- SQL injection attempt
-- command injection
-- credential login attempt
-- webshell upload or webshell access
-- known exploit URI access
-- scanner-like repeated endpoint discovery
-- sensitive file access
-- suspicious script or binary download
-- protocol misuse
-- encoded or obfuscated payload
-
-每個 condition 不應只是一句 MITRE 定義，應補充 payload 觀測層面的描述。
-
-每個 condition 建議包含：
-
-- `label`: 可讀名稱。
-- `id`: 穩定識別碼。
-- `description_full`: 給 embedding model 的完整描述。
-- `observable_patterns`: payload 中常見的可觀測線索。
-- `positive_examples`: 典型正例 payload 或 payload 片段。
-- `negative_examples`: 容易混淆但不應啟動此 condition 的例子。
-- `boundary_notes`: 與其他 condition 的差異。
-- `parent_tactic`: 如需保留 MITRE 對應，可把 behavior condition 映射回 tactic。
-
-### 用意
-
-condition embedding `C_i` 要能成為 payload embedding 的可解釋語意錨點。若 condition 太抽象，模型難以從單筆 payload 中拆出 tactic-level intent。
-
-更好的定義應該是：
-
-```text
-C_i 代表 payload 中可觀測的惡意行為概念，
-而不是只代表高階攻擊目的。
-```
-
-### 注意事項
-
-- 不要把 `Sess_Tactic_predict` 直接當成 ground truth condition。它目前只是 metadata，而且是前一步模型預測結果。
-- condition 粒度不能太細到每個 URI 或 signature 都是一個 condition，否則會變成 signature matching，不是語意解偶。
-- condition 之間要盡量互斥或至少邊界清楚，否則 gate 很容易同時啟動多個高度重疊概念。
-- 如果保留 MITRE tactic，建議 tactic 作為上層 taxonomy，不要直接作為唯一 condition set。
-
-### 驗收指標
-
-- 每個 condition 都能被人工指出 payload 中可能對應的 evidence。
-- condition description 看起來不像單純抽象安全名詞，而是包含 payload 可觀測行為。
-- condition cosine similarity 不應全部高度相似；高度相似的 condition 要合併或補充邊界描述。
-
-## Step 2. 建立 Payload-Condition Explicit Alignment
+## Step 1. 建立 Payload-Condition Explicit Alignment
 
 ### 要修正什麼
 
@@ -89,7 +33,7 @@ sim(payload, wrong_condition) 低
 
 - 人工 golden review 小樣本。
 - 規則標記的 weak labels。
-- 已知 exploit/path/signature 對應到 behavior condition 的弱監督資料。
+- 已知 exploit/path/signature 對應到候選 condition 的弱監督資料。
 - 現有 metadata label 只作輔助分析，不要直接當強標籤。
 
 建議建立 payload-condition pair dataset：
@@ -142,7 +86,7 @@ gate 高，才比較能解釋成 payload 和該 condition 有語意關係。
 - top-k retrieved conditions 應和人工可理解的 payload behavior 一致。
 - 用真 condition descriptions 應明顯優於 shuffled/random condition descriptions。
 
-## Step 3. 改 Gate 語意：從任意 MLP 輸出改成 Explicit x-C Matching
+## Step 2. 改 Gate 語意：從任意 MLP 輸出改成 Explicit x-C Matching
 
 ### 要修正什麼
 
@@ -208,7 +152,7 @@ decoder 為了 reconstruct x 所學到的一組任意權重
 - gate 高的 condition 應能在 payload 中找到合理 evidence。
 - gate 不應在所有 sample 上呈現幾乎固定的 pattern；否則代表 gate 主要學到 condition prior，而不是 sample-specific behavior。
 
-## Step 4. 限制 H，避免 H 偷藏 Condition 資訊
+## Step 3. 限制 H，避免 H 偷藏 Condition 資訊
 
 ### 要修正什麼
 
@@ -267,7 +211,7 @@ H 不容易預測 condition
 - 從 `H` 訓練簡單 probe 預測 condition 時，效果不應太好；若很好，代表 H 偷藏 condition。
 - 同一 payload 在不同 seed 下的 top gate 應大致穩定。
 
-## Step 5. 加入可驗證的 Condition Supervision
+## Step 4. 加入可驗證的 Condition Supervision
 
 ### 要修正什麼
 
@@ -284,7 +228,7 @@ H 不容易預測 condition
 建議資料策略：
 
 1. 先建立小型人工 golden review set。
-2. 每筆 payload 標註 0 到多個 behavior-level conditions。
+2. 每筆 payload 標註 0 到多個目前 condition set 中的 conditions。
 3. 記錄 evidence span 或 evidence note。
 4. 將 golden set 分成 alignment train/dev/test，避免只在同一批資料上調參。
 5. weak labels 可大量補充，但要和 human labels 分開報告。
@@ -307,7 +251,7 @@ contrastive alignment 確保 payload 和 condition embedding 在同一空間可�
 - supervision loss 權重要小心調，太強會讓模型只學 label shortcut，太弱則 gate 仍可能沒有語意。
 - 如果使用 weak labels，要防止模型重現 weak label 的錯誤偏見。
 - 如果 condition 是 multi-label，不要用單一 softmax CE 當唯一 supervision。
-- golden review 的 condition 定義要和 Step 1 的 behavior-level condition 保持一致。
+- golden review 的 condition 定義要和目前使用的 condition set 保持一致。
 
 ### 驗收指標
 
@@ -318,11 +262,10 @@ contrastive alignment 確保 payload 和 condition embedding 在同一空間可�
 
 ## 建議優先順序
 
-1. 先重寫 condition schema，讓 condition 變成 payload 可觀測的 behavior-level concepts。
-2. 建立小型 golden review set，至少能驗證 gate 是否語意正確。
-3. 加入 payload-condition alignment，先從 contrastive/ranking objective 開始。
-4. 將 gate 改成 explicit x-C matching，而不是只由 encoder MLP 自由產生。
-5. 加強 H 的限制與監控，確認 condition pathway 真的承擔可解釋資訊。
+1. 建立小型 golden review set，至少能驗證 gate 是否語意正確。
+2. 加入 payload-condition alignment，先從 contrastive/ranking objective 開始。
+3. 將 gate 改成 explicit x-C matching，而不是只由 encoder MLP 自由產生。
+4. 加強 H 的限制與監控，確認 condition pathway 真的承擔可解釋資訊。
 
 ## 最重要的判斷標準
 

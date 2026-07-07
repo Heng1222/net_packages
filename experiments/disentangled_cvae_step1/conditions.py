@@ -19,6 +19,7 @@ class ConditionEmbeddings:
     labels: list[str]
     matrix: np.ndarray
     metadata: dict[str, Any]
+    raw_matrix: np.ndarray | None = None
 
     @property
     def dimension(self) -> int:
@@ -98,6 +99,121 @@ def _condition_text(record: dict[str, Any], fields: list[str]) -> tuple[str, lis
     return ", ".join(terms), missing
 
 
+def _normalize_rows(matrix: np.ndarray, fallback: np.ndarray | None = None) -> np.ndarray:
+    values = np.asarray(matrix, dtype=np.float64)
+    norms = np.linalg.norm(values, axis=1, keepdims=True)
+    normalized = values / np.clip(norms, 1e-12, None)
+    if fallback is not None:
+        small = norms[:, 0] < 1e-12
+        if np.any(small):
+            normalized[small] = _normalize_rows(fallback)[small]
+    return normalized.astype(np.float32)
+
+
+def cosine_similarity_matrix(matrix: np.ndarray) -> np.ndarray:
+    normalized = matrix / np.clip(np.linalg.norm(matrix, axis=1, keepdims=True), 1e-12, None)
+    return normalized @ normalized.T
+
+
+def cosine_similarity_summary(matrix: np.ndarray) -> dict[str, float]:
+    similarity = cosine_similarity_matrix(np.asarray(matrix, dtype=np.float32))
+    if similarity.shape[0] < 2:
+        return {
+            "offdiag_min": 0.0,
+            "offdiag_p25": 0.0,
+            "offdiag_mean": 0.0,
+            "offdiag_median": 0.0,
+            "offdiag_p75": 0.0,
+            "offdiag_max": 0.0,
+        }
+    offdiag = similarity[~np.eye(similarity.shape[0], dtype=bool)]
+    return {
+        "offdiag_min": float(np.min(offdiag)),
+        "offdiag_p25": float(np.quantile(offdiag, 0.25)),
+        "offdiag_mean": float(np.mean(offdiag)),
+        "offdiag_median": float(np.median(offdiag)),
+        "offdiag_p75": float(np.quantile(offdiag, 0.75)),
+        "offdiag_max": float(np.max(offdiag)),
+    }
+
+
+def _condition_geometry_config(config: dict[str, Any]) -> dict[str, Any]:
+    geometry = config.get("geometry", config.get("postprocess", {}))
+    if geometry is None or geometry is False:
+        return {"method": "none"}
+    if isinstance(geometry, str):
+        return {"method": geometry}
+    if not isinstance(geometry, dict):
+        raise ValueError("conditions.geometry must be a mapping, string, false, or null.")
+    return dict(geometry)
+
+
+def apply_condition_geometry(matrix: np.ndarray, config: dict[str, Any] | None) -> tuple[np.ndarray, dict[str, Any]]:
+    geometry = dict(config or {})
+    method = str(geometry.get("method", "none")).lower()
+    raw = np.asarray(matrix, dtype=np.float32)
+    raw_normalized = _normalize_rows(raw)
+    raw_summary = cosine_similarity_summary(raw_normalized)
+
+    if method in {"none", "raw"}:
+        return raw.astype(np.float32), {
+            "condition_geometry": {"method": "none"},
+            "raw_condition_cosine": raw_summary,
+            "transformed_condition_cosine": raw_summary,
+        }
+
+    if method not in {"center", "common_component_removal"}:
+        raise ValueError(
+            "conditions.geometry.method must be one of: none, center, common_component_removal."
+        )
+
+    centered = bool(geometry.get("center", True))
+    normalize = bool(geometry.get("normalize", True))
+    strength = float(geometry.get("strength", 1.0))
+    if not 0.0 <= strength <= 1.0:
+        raise ValueError("conditions.geometry.strength must be between 0.0 and 1.0.")
+
+    transformed = np.asarray(raw, dtype=np.float64)
+    if centered:
+        transformed = transformed - transformed.mean(axis=0, keepdims=True)
+
+    remove_top_components = 0
+    if method == "common_component_removal":
+        remove_top_components = int(geometry.get("remove_top_components", 1))
+        if remove_top_components < 0:
+            raise ValueError("conditions.geometry.remove_top_components must be non-negative.")
+        max_components = max(0, min(transformed.shape[0] - 1, transformed.shape[1]))
+        remove_top_components = min(remove_top_components, max_components)
+        if remove_top_components:
+            _, _, vh = np.linalg.svd(transformed, full_matrices=False)
+            components = vh[:remove_top_components]
+            transformed = transformed - transformed @ components.T @ components
+
+    if normalize:
+        transformed = _normalize_rows(transformed, fallback=raw)
+    else:
+        transformed = transformed.astype(np.float32)
+
+    if strength < 1.0:
+        transformed = _normalize_rows(
+            (1.0 - strength) * raw_normalized + strength * _normalize_rows(transformed),
+            fallback=raw,
+        )
+
+    transformed = transformed.astype(np.float32)
+    return transformed, {
+        "condition_geometry": {
+            "method": method,
+            "center": centered,
+            "normalize": normalize,
+            "remove_top_components": remove_top_components,
+            "strength": strength,
+        },
+        "raw_condition_cosine": raw_summary,
+        "transformed_condition_cosine": cosine_similarity_summary(transformed),
+    }
+
+
 def _cache_key(config: dict[str, Any], labels: list[str], texts: list[str], text_fields: list[str]) -> str:
     digest = hashlib.sha256()
     for label, text in zip(labels, texts, strict=True):
@@ -157,12 +273,20 @@ def load_condition_embeddings(
     meta_path = cache_dir / f"conditions_{key}.json"
     if cache_path.is_file():
         with np.load(cache_path, allow_pickle=False) as archive:
-            matrix = archive["matrix"].astype(np.float32)
+            raw_matrix = archive["matrix"].astype(np.float32)
             labels = archive["labels"].astype(str).tolist()
+        matrix, geometry_metadata = apply_condition_geometry(raw_matrix, _condition_geometry_config(config))
         return ConditionEmbeddings(
             labels,
             matrix,
-            {"cache_hit": True, "cache_path": str(cache_path), "text_fields": text_fields, **metadata},
+            {
+                "cache_hit": True,
+                "cache_path": str(cache_path),
+                "text_fields": text_fields,
+                **geometry_metadata,
+                **metadata,
+            },
+            raw_matrix,
         )
 
     embedder_config = {
@@ -174,8 +298,9 @@ def load_condition_embeddings(
         "output_dim": config.get("output_dim", 768),
     }
     embedder = build_text_embedder(embedder_config, device)
-    matrix = embedder.encode(texts).astype(np.float32)
-    np.savez_compressed(cache_path, labels=np.asarray(requested, dtype=str), matrix=matrix)
+    raw_matrix = embedder.encode(texts).astype(np.float32)
+    matrix, geometry_metadata = apply_condition_geometry(raw_matrix, _condition_geometry_config(config))
+    np.savez_compressed(cache_path, labels=np.asarray(requested, dtype=str), matrix=raw_matrix)
     meta_path.write_text(
         json.dumps(
             {
@@ -185,6 +310,7 @@ def load_condition_embeddings(
                 "text_fields": text_fields,
                 "text_preview": dict(zip(requested, texts, strict=True)),
                 "condition_file_metadata": metadata,
+                **geometry_metadata,
             },
             indent=2,
             ensure_ascii=False,
@@ -194,10 +320,12 @@ def load_condition_embeddings(
     return ConditionEmbeddings(
         requested,
         matrix,
-        {"cache_hit": False, "cache_path": str(cache_path), "text_fields": text_fields, **metadata},
+        {
+            "cache_hit": False,
+            "cache_path": str(cache_path),
+            "text_fields": text_fields,
+            **geometry_metadata,
+            **metadata,
+        },
+        raw_matrix,
     )
-
-
-def cosine_similarity_matrix(matrix: np.ndarray) -> np.ndarray:
-    normalized = matrix / np.clip(np.linalg.norm(matrix, axis=1, keepdims=True), 1e-12, None)
-    return normalized @ normalized.T

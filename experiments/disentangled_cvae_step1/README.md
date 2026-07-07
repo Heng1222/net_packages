@@ -30,7 +30,34 @@ The cached prepared dataset contains:
 - `metadata.csv`: sample id, metadata label, time, payload hash, ISP/protocol metadata
 - `manifest.json`: source/config fingerprint used to decide whether cache can be reused
 
-The condition embeddings are 768-dimensional vectors produced by the same `nomic-ai/modernbert-embed-base` model. They are real CVAE condition input in this version. By default, each condition is still one tactic, but its text is now built from tactic-level keywords plus the complete top-level MITRE Enterprise ATT&CK v11.3 technique names under that tactic. Technique IDs and sub-techniques are omitted from the condition text. This avoids embedding the full prose descriptions with many shared filler words and should make the condition cosine similarity diagnostic more informative. For every sample, the encoder receives the payload embedding plus the full non-Normal condition matrix. The encoder learns `H` and one gate per condition. The decoder receives `H` plus the gated condition embeddings and reconstructs `x`.
+The raw condition embeddings are 768-dimensional vectors produced by the same `nomic-ai/modernbert-embed-base` model. They are real CVAE condition input in this version. By default, each condition is still one tactic, but its text is now built from tactic-level keywords plus the complete top-level MITRE Enterprise ATT&CK v11.3 technique names under that tactic. Technique IDs and sub-techniques are omitted from the condition text. This avoids embedding the full prose descriptions with many shared filler words and should make the raw condition cosine similarity diagnostic more informative.
+
+Because tactic descriptions still share a large common MITRE/security background, the model-used condition matrix applies a configurable geometry transform after raw embedding. The default removes the condition centroid plus the first shared principal direction, then row-normalizes the result. This is intended to remove shared background semantics such as "adversary", "technique", and "network" while keeping condition-specific residual directions. For every sample, the encoder receives the payload embedding plus this full non-Normal condition matrix. The encoder learns `H` and one gate per condition. The decoder receives `H` plus the gated condition embeddings and reconstructs `x`.
+
+### Condition Geometry Transform
+
+The condition transform is configured under `conditions.geometry`:
+
+```yaml
+geometry:
+  method: "common_component_removal"
+  center: true
+  remove_top_components: 1
+  normalize: true
+  strength: 1.0
+```
+
+This is not a contrastive loss and does not fine-tune the embedding model. It is a deterministic post-processing step applied only to the fixed condition matrix. The raw condition vectors are still saved for diagnostics, while the transformed vectors are the ones used by the encoder, decoder, gate decorrelation loss, and gated semantic summaries.
+
+For the current 13 default ModernBERT condition vectors, this expands the condition space as follows:
+
+| off-diagonal cosine summary | raw condition vectors | model-used condition vectors |
+| --- | ---: | ---: |
+| mean | 0.7545 | -0.0821 |
+| median | 0.7519 | -0.0965 |
+| max | 0.8414 | 0.3270 |
+
+The lower model-used off-diagonal values mean the conditions are no longer clustered around the same shared MITRE/security background direction. A slightly negative average is expected after centering a small set of vectors; it means the condition directions are spread around the origin, not that the tactics are semantically opposite. If the transformed max cosine is still too high, increase `remove_top_components` to `2`. If the transform becomes too aggressive, lower `strength` to `0.5` or `0.75`.
 
 Token length check on `clean_payload_list` with the ModernBERT tokenizer showed that almost all Step1 rows fit in 8192 tokens: median 94, p99 332, p99.9 650. Only 7 of 409,699 rows exceeded 8192 tokens, with the maximum at 45,700. Therefore the pipeline does not chunk ordinary rows. It chunks only overflow rows and averages their chunk embeddings so full-data preparation does not fail or silently truncate those rare long payloads.
 
@@ -38,7 +65,9 @@ Token length check on `clean_payload_list` with the ModernBERT tokenizer showed 
 Payload text
   -> ModernBERT payload embedding x [768]
 Condition keywords + technique names
-  -> ModernBERT condition embeddings C_all [num_conditions, 768]
+  -> ModernBERT raw condition embeddings
+  -> common-component removal
+  -> model-used condition embeddings C_all [num_conditions, 768]
 
 Encoder input:
   concat(x, flatten(C_all))
@@ -64,7 +93,7 @@ The loss is designed to prevent the model from hiding everything in one latent v
 
 `L_decorrelation`: condition-gate independence. It penalizes simultaneously activating condition vectors that are highly similar. This addresses the meeting concern that similar C spaces can split the same information arbitrarily and become hard to interpret.
 
-Condition cosine similarity is reported as a diagnostic heatmap only. It is not optimized by the model in this version.
+Condition cosine similarity is reported as raw and model-used diagnostic heatmaps. The raw heatmap shows whether the embedding model collapses tactic descriptions into a shared background direction. The model-used heatmap shows the geometry actually fed to the CVAE after common-component removal.
 
 `L_sparse`: sparse gate activation. This implements the meeting requirement "do not split unless needed." It encourages each sample to use fewer condition concepts, making the explanation simpler.
 
@@ -127,10 +156,12 @@ Each run writes to `outputs/disentangled_cvae_step1/<timestamp>/`:
 - `metrics/loss_summary.json`
 - `metrics/condition_gate_summary.csv`
 - `metrics/condition_ablation_delta_mse_summary.csv`
+- `metrics/condition_raw_cosine_similarity.csv`
 - `metrics/condition_cosine_similarity.csv`
 - `metrics/leakage_report.json`
 - `metrics/testset_condition_predictions.csv`
 - `metrics/testset_subset_100.csv`
+- `plots/condition_raw_cosine_similarity.png`
 - `plots/condition_cosine_similarity.png`
 - `plots/training_reconstruction_losses.png`
 - `plots/umap_original_space.png`

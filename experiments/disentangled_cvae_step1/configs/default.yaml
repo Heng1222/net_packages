@@ -50,6 +50,12 @@ conditions:
   embedder_model_revision: "d556a88e332558790b210f7bdbe87da2fa94a8d8"
   batch_size: 4
   normalize: true
+  geometry:
+    method: "common_component_removal"
+    center: true
+    remove_top_components: 1
+    normalize: true
+    strength: 1.0
   exclude_labels:
     - "Normal (TA9000)"
 

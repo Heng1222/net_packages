@@ -81,6 +81,7 @@ class DisentangledConditionalVAE(nn.Module):
             "kl": 1.0,
             "decorrelation": 0.1,
             "sparse": 0.001,
+            "gate_entropy": 0.01,
             "utility": 0.5,
             "residual_constraint": 0.5,
         }
@@ -157,12 +158,14 @@ class DisentangledConditionalVAE(nn.Module):
         h_mu = self.h_mu(hidden)
         h_logvar = self.h_logvar(hidden).clamp(min=-30.0, max=20.0)
         h = self.reparameterize(h_mu, h_logvar) if sample else h_mu
-        gates = torch.sigmoid(self.gate_out(hidden))
+        gate_logits = self.gate_out(hidden)
+        gates = torch.sigmoid(gate_logits / self.temperature)
         return {
             "h": h,
             "h_mu": h_mu,
             "h_logvar": h_logvar,
             "conditions": conditions,
+            "gate_logits": gate_logits,
             "gates": gates,
         }
 
@@ -235,6 +238,11 @@ class DisentangledConditionalVAE(nn.Module):
         decorrelation = decor_num / decor_den
 
         sparse = output["gates"].mean()
+        gate_probs = output["gates"].clamp(min=1e-6, max=1.0 - 1e-6)
+        gate_entropy = -(
+            gate_probs * gate_probs.log()
+            + (1.0 - gate_probs) * (1.0 - gate_probs).log()
+        ).mean()
 
         deltas = self.ablation_deltas(output, target)
         utility_margin = F.relu(self.utility_margin - deltas)
@@ -249,6 +257,7 @@ class DisentangledConditionalVAE(nn.Module):
             + self.weights["kl"] * kl
             + self.weights["decorrelation"] * decorrelation
             + self.weights["sparse"] * sparse
+            + self.weights["gate_entropy"] * gate_entropy
             + self.weights["utility"] * utility
             + self.weights["residual_constraint"] * residual_constraint
         )
@@ -260,6 +269,7 @@ class DisentangledConditionalVAE(nn.Module):
             "kl_loss": kl,
             "decorrelation_loss": decorrelation,
             "sparse_loss": sparse,
+            "gate_entropy_loss": gate_entropy,
             "utility_loss": utility,
             "residual_constraint_loss": residual_constraint,
             "recon_nll_per_sample": recon_nll_per_sample,

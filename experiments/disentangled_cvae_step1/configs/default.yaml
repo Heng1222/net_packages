@@ -82,6 +82,7 @@ model:
     kl: 1.0
     decorrelation: 0.1
     sparse: 1.0
+    gate_entropy: 0.01
     utility: 0.5
     residual_constraint: 0.5
 
@@ -96,6 +97,7 @@ training:
 
 evaluation:
   random_state: 42
+  condition_threshold: 0.5
   run_visualization: true
   visualization_backend: "umap"
   visualization_max_samples: 5000

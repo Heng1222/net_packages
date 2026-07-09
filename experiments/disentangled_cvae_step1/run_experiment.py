@@ -195,18 +195,23 @@ def run_train(config: dict, run_dir: Path, device: torch.device, logger: logging
         device,
         int(config["training"]["batch_size"]),
     )
+    condition_threshold = float(config.get("evaluation", {}).get("condition_threshold", 0.5))
     test_predictions = build_test_condition_predictions(
         metadata,
         split.test,
         test_outputs["gates"],
         conditions.labels,
+        threshold=condition_threshold,
     )
     logger.info("Writing test predictions and condition summaries")
     test_predictions.to_csv(run_dir / "metrics" / "testset_condition_predictions.csv", index=False)
     write_testset_subset(test_predictions, run_dir / "metrics" / "testset_subset_100.csv")
     write_json(test_outputs["loss_summary"], run_dir / "metrics" / "loss_summary.json")
     write_condition_gate_summary(
-        test_outputs["gates"], conditions.labels, run_dir / "metrics" / "condition_gate_summary.csv"
+        test_outputs["gates"],
+        conditions.labels,
+        run_dir / "metrics" / "condition_gate_summary.csv",
+        activation_threshold=condition_threshold,
     )
     write_condition_ablation_summary(
         test_outputs["ablation_delta_mse"],
@@ -291,7 +296,7 @@ def write_report(
         f"- Train/val/test: {len(split.train)} / {len(split.val)} / {len(split.test)}",
         "- Normal (TA9000) is not a condition.",
         "- `Sess_Tactic_predict` is retained in prepared metadata only; it is not used for training.",
-        "- Test-set `predicted_condition` is derived from softmax-normalized CVAE condition gates.",
+        "- Test-set `predicted_conditions` are derived from independent multi-label CVAE condition gates.",
         "",
         "## Condition Labels",
         "",
@@ -335,7 +340,8 @@ def write_report(
             "## Interpretation Boundary",
             "",
             "`Sess_Tactic_predict` is a model prediction from an earlier step and is intentionally not used for training "
-            "or condition summaries. Plot colors and test CSV labels are model-derived CVAE condition-gate predictions.",
+            "or condition summaries. Plot colors use the highest active gate per row; "
+            "the test CSV also exports multi-label `predicted_conditions`.",
             "",
         ]
     )

@@ -23,6 +23,7 @@ class ModelTests(unittest.TestCase):
                 "kl": 1.0,
                 "decorrelation": 0.1,
                 "sparse": 0.001,
+                "gate_entropy": 0.01,
                 "utility": 0.5,
                 "residual_constraint": 0.5,
             },
@@ -35,11 +36,13 @@ class ModelTests(unittest.TestCase):
         output = model(x, conditions, sample=False)
         self.assertEqual(output["h"].shape, (5, 8))
         self.assertEqual(output["conditions"].shape, (5, 3, 768))
+        self.assertEqual(output["gate_logits"].shape, (5, 3))
         self.assertEqual(output["gates"].shape, (5, 3))
         self.assertEqual(output["x_recon"].shape, (5, 768))
         losses = model.loss(output, x)
         self.assertTrue(torch.isfinite(losses["loss"]))
         self.assertGreaterEqual(float(losses["sparse_loss"].detach()), 0.0)
+        self.assertGreaterEqual(float(losses["gate_entropy_loss"].detach()), 0.0)
         self.assertEqual(losses["ablation_delta_mse"].shape, (5, 3))
 
 

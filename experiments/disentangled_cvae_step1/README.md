@@ -13,7 +13,7 @@ The first version uses the cleaned Step1 packet/session dataset:
 - Primary split: time split, 70% train, 15% validation, 15% test
 - Payload overflow policy: `chunk_mean`
 
-`Normal (TA9000)` is not a condition. `Sess_Tactic_predict` is kept only in prepared metadata for traceability. It is not used as a weak label or used for condition grouping. Test-set plot colors and exported prediction labels are derived from softmax-normalized CVAE condition gates.
+`Normal (TA9000)` is not a condition. `Sess_Tactic_predict` is kept only in prepared metadata for traceability. It is not used as a weak label or used for condition grouping. Test-set exported condition labels are derived from independent multi-label CVAE condition gates.
 
 ## Design
 
@@ -76,7 +76,7 @@ Encoder input:
 
 Encoder outputs:
   residual H [64]
-  gates [num_conditions]
+  independent sigmoid gates [num_conditions]
 
 Decoder input:
   concat(H, flatten(gates * C_all))
@@ -99,6 +99,8 @@ Condition cosine similarity is reported as raw and model-used diagnostic heatmap
 
 `L_sparse`: sparse gate activation. This implements the meeting requirement "do not split unless needed." It encourages each sample to use fewer condition concepts, making the explanation simpler.
 
+`L_gate_entropy`: gate binarization. Because condition use is treated as multi-label rather than a single softmax class, each gate is an independent sigmoid probability. The entropy term encourages gates to move toward clear off/on decisions instead of staying near 0.5.
+
 `L_utility`: condition utility through ablation. Each gated condition is removed and the decoder is asked to reconstruct again. If removing a condition does not hurt reconstruction, the condition gate is probably decorative. The margin loss encourages active condition gates to carry useful information.
 
 `L_residual_constraint`: residual-only limitation. The decoder is run with all condition gates removed. If `H` alone reconstructs almost as well as `H + gated C`, then the condition input is not doing the work. This loss encourages useful behavior information to move into the gated condition pathway.
@@ -109,7 +111,8 @@ Default weights:
 reconstruction: 1.0
 kl: 1.0
 decorrelation: 0.1
-sparse: 0.001
+sparse: 1.0
+gate_entropy: 0.01
 utility: 0.5
 residual_constraint: 0.5
 ```
@@ -171,4 +174,4 @@ Each run writes to `outputs/disentangled_cvae_step1/<timestamp>/`:
 - `plots/umap_gated_c_space.png`
 - `reports/report.md`
 
-`Sess_Tactic_predict` is metadata only in this version. It is not used as a weak label, no tactic classifier/probe is trained, and no condition table is grouped by it. Test-set UMAP/PCA plots are colored by the model-derived `predicted_condition` label.
+`Sess_Tactic_predict` is metadata only in this version. It is not used as a weak label, no tactic classifier/probe is trained, and no condition table is grouped by it. Test-set CSV exports `predicted_conditions` for multi-label gate activations; UMAP/PCA plots are colored by the model-derived highest active `predicted_condition` label.

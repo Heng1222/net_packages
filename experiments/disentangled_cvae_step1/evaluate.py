@@ -19,15 +19,13 @@ from .conditions import cosine_similarity_matrix
 AMBIGUOUS_LABEL = "ambiguous"
 
 
-def softmax_condition_gates(gates: np.ndarray) -> np.ndarray:
+def independent_condition_probabilities(gates: np.ndarray) -> np.ndarray:
     values = np.asarray(gates, dtype=np.float64)
     if values.ndim != 2:
         raise ValueError(f"gates must be a 2D array; got shape {values.shape}")
     if values.shape[0] == 0:
         return values.astype(np.float32)
-    shifted = values - np.max(values, axis=1, keepdims=True)
-    exp = np.exp(shifted)
-    return (exp / exp.sum(axis=1, keepdims=True)).astype(np.float32)
+    return np.clip(values, 0.0, 1.0).astype(np.float32)
 
 
 def build_test_condition_predictions(
@@ -47,7 +45,7 @@ def build_test_condition_predictions(
     if gate_values.shape[1] != len(condition_labels):
         raise ValueError("gates column count must match condition_labels.")
 
-    probabilities = softmax_condition_gates(gate_values)
+    probabilities = independent_condition_probabilities(gate_values)
     base = metadata.iloc[indices].reset_index(drop=True).copy()
     metadata_columns = [col for col in base.columns if col not in {"row_index", "test_position"}]
     frame = pd.DataFrame(
@@ -64,13 +62,23 @@ def build_test_condition_predictions(
         max_indices = np.argmax(probabilities, axis=1)
         max_probabilities = probabilities[np.arange(len(probabilities)), max_indices]
         max_conditions = np.asarray(condition_labels, dtype=object)[max_indices]
-        predicted = np.where(max_probabilities > float(threshold), max_conditions, ambiguous_label)
+        active = probabilities >= float(threshold)
+        active_counts = active.sum(axis=1)
+        predicted_multi = []
+        for row in active:
+            labels = [condition_labels[index] for index, is_active in enumerate(row) if is_active]
+            predicted_multi.append("|".join(labels) if labels else ambiguous_label)
+        predicted = np.where(max_probabilities >= float(threshold), max_conditions, ambiguous_label)
         frame["max_condition"] = max_conditions
         frame["max_condition_probability"] = max_probabilities
+        frame["active_condition_count"] = active_counts
+        frame["predicted_conditions"] = predicted_multi
         frame["predicted_condition"] = predicted
     else:
         frame["max_condition"] = []
         frame["max_condition_probability"] = []
+        frame["active_condition_count"] = []
+        frame["predicted_conditions"] = []
         frame["predicted_condition"] = []
     return frame
 
@@ -91,6 +99,7 @@ def write_condition_gate_summary(
     gates: np.ndarray,
     condition_labels: list[str],
     path: Path,
+    activation_threshold: float = 0.5,
 ) -> None:
     frame = pd.DataFrame(gates, columns=condition_labels)
     rows = []
@@ -104,6 +113,7 @@ def write_condition_gate_summary(
                 "p50_gate": float(values.quantile(0.50)),
                 "p90_gate": float(values.quantile(0.90)),
                 "p99_gate": float(values.quantile(0.99)),
+                "active_rate": float((values >= float(activation_threshold)).mean()),
             }
         )
     pd.DataFrame(rows).to_csv(path, index=False)

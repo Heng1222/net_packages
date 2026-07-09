@@ -22,6 +22,7 @@ TRACKED = (
     "kl_loss",
     "decorrelation_loss",
     "sparse_loss",
+    "gate_entropy_loss",
     "utility_loss",
     "residual_constraint_loss",
 )

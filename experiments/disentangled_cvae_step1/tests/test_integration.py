@@ -83,6 +83,7 @@ class IntegrationTests(unittest.TestCase):
                         "kl": 1.0,
                         "decorrelation": 0.1,
                         "sparse": 0.001,
+                        "gate_entropy": 0.01,
                         "utility": 0.1,
                         "residual_constraint": 0.1,
                     },
@@ -98,6 +99,7 @@ class IntegrationTests(unittest.TestCase):
                 },
                 "evaluation": {
                     "random_state": 42,
+                    "condition_threshold": 0.5,
                     "run_visualization": True,
                     "visualization_backend": "pca",
                     "visualization_max_samples": 60,
@@ -147,15 +149,13 @@ class IntegrationTests(unittest.TestCase):
             history = pd.read_csv(run_dir / "metrics" / "training_history.csv")
             self.assertIn("val_h_only_mse", history.columns)
             self.assertIn("val_c_only_mse", history.columns)
+            self.assertIn("val_gate_entropy_loss", history.columns)
             predictions = pd.read_csv(run_dir / "metrics" / "testset_condition_predictions.csv")
             prob_cols = [column for column in predictions.columns if column.startswith("condition_prob__")]
             self.assertGreater(len(prob_cols), 0)
-            np.testing.assert_allclose(
-                predictions[prob_cols].sum(axis=1).to_numpy(),
-                np.ones(len(predictions)),
-                rtol=1e-5,
-                atol=1e-5,
-            )
+            self.assertTrue(((predictions[prob_cols] >= 0.0) & (predictions[prob_cols] <= 1.0)).all().all())
+            self.assertIn("active_condition_count", predictions.columns)
+            self.assertIn("predicted_conditions", predictions.columns)
             allowed = {column.replace("condition_prob__", "", 1) for column in prob_cols}
             allowed.add("ambiguous")
             self.assertTrue(set(predictions["predicted_condition"]).issubset(allowed))

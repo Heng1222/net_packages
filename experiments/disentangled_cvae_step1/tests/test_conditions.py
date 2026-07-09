@@ -22,6 +22,15 @@ CONDITION_FILE = Path("experiments/disentangled_cvae_step1/conditions/mitre_atta
 
 
 class ConditionEmbeddingTests(unittest.TestCase):
+    def test_default_geometry_centers_and_normalizes_without_component_removal(self) -> None:
+        config_path = Path("experiments/disentangled_cvae_step1/configs/default.yaml")
+        config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+        geometry = config["conditions"]["geometry"]
+        self.assertEqual(geometry["method"], "common_component_removal")
+        self.assertTrue(geometry["center"])
+        self.assertEqual(geometry["remove_top_components"], 0)
+        self.assertTrue(geometry["normalize"])
+
     def test_text_fields_join_keywords_and_techniques(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)

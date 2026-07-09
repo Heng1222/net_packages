@@ -53,8 +53,8 @@ conditions:
   geometry:
     method: "common_component_removal"
     center: true
-    # Remove the first shared principal direction after centering.
-    remove_top_components: 1
+    # Keep the transform to centering plus row-normalization by default.
+    remove_top_components: 0
     normalize: true
     strength: 1.0
   exclude_labels:

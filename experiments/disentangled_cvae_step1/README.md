@@ -32,7 +32,7 @@ The cached prepared dataset contains:
 
 The raw condition embeddings are 768-dimensional vectors produced by the same `nomic-ai/modernbert-embed-base` model. They are real CVAE condition input in this version. By default, each condition is still one tactic, but its text is now built from tactic-level keywords plus the complete top-level MITRE Enterprise ATT&CK v11.3 technique names under that tactic. Technique IDs and sub-techniques are omitted from the condition text. This avoids embedding the full prose descriptions with many shared filler words and should make the raw condition cosine similarity diagnostic more informative.
 
-Because tactic descriptions still share a large common MITRE/security background, the model-used condition matrix applies a configurable geometry transform after raw embedding. The default removes the condition centroid plus the first shared principal direction, then row-normalizes the result. This is intended to remove shared background semantics such as "adversary", "technique", and "network" while keeping condition-specific residual directions. For every sample, the encoder receives the payload embedding plus this full non-Normal condition matrix. The encoder learns `H` and one gate per condition. The decoder receives `H` plus the gated condition embeddings and reconstructs `x`.
+Because tactic descriptions still share a large common MITRE/security background, the model-used condition matrix applies a configurable geometry transform after raw embedding. The default subtracts the condition centroid, skips principal-direction removal, then row-normalizes the result. This is intended to reduce shared background semantics such as "adversary", "technique", and "network" while keeping condition-specific residual directions. For every sample, the encoder receives the payload embedding plus this full non-Normal condition matrix. The encoder learns `H` and one gate per condition. The decoder receives `H` plus the gated condition embeddings and reconstructs `x`.
 
 ### Condition Geometry Transform
 
@@ -42,24 +42,24 @@ The condition transform is configured under `conditions.geometry`:
 geometry:
   method: "common_component_removal"
   center: true
-  remove_top_components: 1
+  remove_top_components: 0
   normalize: true
   strength: 1.0
 ```
 
 This is not a contrastive loss and does not fine-tune the embedding model. It is a deterministic post-processing step applied only to the fixed condition matrix. The raw condition vectors are still saved for diagnostics, while the transformed vectors are the ones used by the encoder, decoder, gate decorrelation loss, and gated semantic summaries.
 
-With `remove_top_components: 1`, the transform subtracts the condition centroid and then removes the first shared principal direction before row-normalization. Setting `remove_top_components` to `0` keeps the transform as centering plus optional normalization only.
+With `remove_top_components: 0`, the transform subtracts the condition centroid and then row-normalizes each condition vector. Setting `remove_top_components` to `1` additionally removes the first shared principal direction before row-normalization.
 
 For the current 13 default ModernBERT condition vectors, this expands the condition space as follows:
 
 | off-diagonal cosine summary | raw condition vectors | model-used condition vectors |
 | --- | ---: | ---: |
-| mean | 0.7545 | -0.0821 |
-| median | 0.7519 | -0.0965 |
-| max | 0.8414 | 0.3270 |
+| mean | 0.7545 | -0.0830 |
+| median | 0.7519 | -0.0875 |
+| max | 0.8414 | 0.2850 |
 
-The lower model-used off-diagonal values mean the conditions are no longer clustered around the same shared MITRE/security background direction. A slightly negative average is expected after centering a small set of vectors; it means the condition directions are spread around the origin, not that the tactics are semantically opposite. If the transformed max cosine is still too high, increase `remove_top_components` to `2`. If the transform becomes too aggressive, lower `strength` to `0.5` or `0.75`.
+The lower model-used off-diagonal values mean the conditions are no longer clustered around the same shared MITRE/security background direction. A slightly negative average is expected after centering a small set of vectors; it means the condition directions are spread around the origin, not that the tactics are semantically opposite. If the transformed max cosine is still too high, increase `remove_top_components` to `1` or `2`. If the transform becomes too aggressive, lower `strength` to `0.5` or `0.75`.
 
 Token length check on `clean_payload_list` with the ModernBERT tokenizer showed that almost all Step1 rows fit in 8192 tokens: median 94, p99 332, p99.9 650. Only 7 of 409,699 rows exceeded 8192 tokens, with the maximum at 45,700. Therefore the pipeline does not chunk ordinary rows. It chunks only overflow rows and averages their chunk embeddings so full-data preparation does not fail or silently truncate those rare long payloads.
 

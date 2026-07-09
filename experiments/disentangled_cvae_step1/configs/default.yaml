@@ -53,6 +53,7 @@ conditions:
   geometry:
     method: "common_component_removal"
     center: true
+    # Remove the first shared principal direction after centering.
     remove_top_components: 1
     normalize: true
     strength: 1.0

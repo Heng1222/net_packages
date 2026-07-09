@@ -49,6 +49,8 @@ geometry:
 
 This is not a contrastive loss and does not fine-tune the embedding model. It is a deterministic post-processing step applied only to the fixed condition matrix. The raw condition vectors are still saved for diagnostics, while the transformed vectors are the ones used by the encoder, decoder, gate decorrelation loss, and gated semantic summaries.
 
+With `remove_top_components: 1`, the transform subtracts the condition centroid and then removes the first shared principal direction before row-normalization. Setting `remove_top_components` to `0` keeps the transform as centering plus optional normalization only.
+
 For the current 13 default ModernBERT condition vectors, this expands the condition space as follows:
 
 | off-diagonal cosine summary | raw condition vectors | model-used condition vectors |

@@ -9,11 +9,13 @@ The first version uses the cleaned Step1 packet/session dataset:
 - Input CSV: `Year=2022/Step1_rawdata_cleaned.csv`
 - Default payload column: `clean_payload_list`
 - Metadata label column: `Sess_Tactic_predict`
+- Optional weak supervision CSV: `Year=2022/Step2_golden_review_2_with_Tactic.csv`
+- Weak supervision label column: `Tactic`
 - Embedding model: `nomic-ai/modernbert-embed-base`
 - Primary split: time split, 70% train, 15% validation, 15% test
 - Payload overflow policy: `chunk_mean`
 
-`Normal (TA9000)` is not a condition. `Sess_Tactic_predict` is kept only in prepared metadata for traceability. It is not used as a weak label or used for condition grouping. Test-set exported condition labels are derived from independent multi-label CVAE condition gates.
+`Normal (TA9000)` is not a condition. `Sess_Tactic_predict` is kept only in prepared metadata for traceability. It is not used as a weak label or used for condition grouping. When weak supervision is enabled, the only accepted label source is the Step2 golden review CSV column `Tactic`; other Step1 prediction columns are rejected for supervised behavior alignment.
 
 ## Design
 
@@ -83,6 +85,10 @@ Decoder input:
 
 Decoder output:
   reconstructed x [768]
+
+Optional weak supervision:
+  Step2 golden Tactic
+  -> target condition index for matched Session_ID rows only
 ```
 
 ## Loss Design
@@ -105,6 +111,10 @@ Condition cosine similarity is reported as raw and model-used diagnostic heatmap
 
 `L_residual_constraint`: residual-only limitation. The decoder is run with all condition gates removed. If `H` alone reconstructs almost as well as `H + gated C`, then the condition input is not doing the work. This loss encourages useful behavior information to move into the gated condition pathway.
 
+`L_behavior_infonce`: weak behavior alignment. For rows that match the Step2 golden review file, the gated condition summary is used as the query and the condition matrix rows are the candidate prototypes. Cross-entropy over cosine logits implements InfoNCE against the golden `Tactic` target.
+
+`L_residual_adversary`: residual leakage reduction. A gradient-reversal tactic classifier is attached to `H`; the classifier learns to predict the golden `Tactic`, while the encoder receives the reversed gradient so `H` becomes less tactic-informative.
+
 Default weights:
 
 ```text
@@ -115,6 +125,8 @@ sparse: 1.0
 gate_entropy: 0.01
 utility: 0.5
 residual_constraint: 0.5
+behavior_infonce: 1.0
+residual_adversary: 0.1
 ```
 
 ## Commands
@@ -159,6 +171,8 @@ Each run writes to `outputs/disentangled_cvae_step1/<timestamp>/`:
 - `checkpoints/disentangled_cvae.pt`
 - `metrics/training_history.csv`
 - `metrics/loss_summary.json`
+- `metrics/behavior_supervision_summary.json`
+- `metrics/behavior_alignment_metrics.json`
 - `metrics/condition_gate_summary.csv`
 - `metrics/condition_ablation_delta_mse_summary.csv`
 - `metrics/condition_raw_cosine_similarity.csv`
@@ -174,4 +188,4 @@ Each run writes to `outputs/disentangled_cvae_step1/<timestamp>/`:
 - `plots/umap_gated_c_space.png`
 - `reports/report.md`
 
-`Sess_Tactic_predict` is metadata only in this version. It is not used as a weak label, no tactic classifier/probe is trained, and no condition table is grouped by it. Test-set CSV exports `predicted_conditions` for multi-label gate activations; UMAP/PCA plots are colored by the model-derived highest active `predicted_condition` label.
+`Sess_Tactic_predict` is metadata only in this version. It is not used as a weak label, and no condition table is grouped by it. The optional behavior alignment uses only Step2 golden `Tactic` values matched by `Session_ID`. Test-set CSV exports `gold_tactic`, `predicted_conditions`, and per-condition probabilities; UMAP/PCA plots are colored by the model-derived highest active `predicted_condition` label.

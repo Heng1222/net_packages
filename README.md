@@ -70,9 +70,12 @@ Year=2022/Step1_rawdata.csv
 Year=2022/Step1_rawdata_cleaned.csv
 Year=2022/Step2_golden_review.csv
 Year=2022/Step2_golden_review_with_Tactic.csv
+Year=2022/Step2_golden_review_2_with_Tactic.csv
 ```
 
 `Step2_golden_review_with_Tactic.csv` must include the columns from `Step2_golden_review.csv` plus a curated `Tactic` column. The AE/CVAE tactic configs use this file by default.
+
+`Step2_golden_review_2_with_Tactic.csv` is used by the Step1 disentangled CVAE experiment as the optional weak supervision source. Only its `Tactic` column is accepted for behavior alignment; Step1 prediction columns such as `Sess_Tactic_predict` remain metadata and are not used as supervised labels.
 
 ## Data preparation
 
@@ -102,6 +105,12 @@ After review/labeling, save the curated tactic file as:
 Year=2022/Step2_golden_review_with_Tactic.csv
 ```
 
+For the Step1 disentangled CVAE weak-supervision run, save the curated second review file as:
+
+```text
+Year=2022/Step2_golden_review_2_with_Tactic.csv
+```
+
 ## Running experiments
 
 AE/CVAE tactic experiment:
@@ -125,6 +134,17 @@ Step1 disentangled CVAE experiment:
 uv run python experiments\disentangled_cvae_step1\run_experiment.py `
   --config experiments\disentangled_cvae_step1\configs\default.yaml `
   --stage all
+```
+
+The Step1 disentangled CVAE uses reconstruction plus condition-gate regularization, and now optionally aligns behavior gates with Step2 golden `Tactic` labels through an InfoNCE-style objective. It also trains a gradient-reversal residual adversary so the residual `H` space is discouraged from carrying tactic information. The default config enables this weak supervision from `Year=2022/Step2_golden_review_2_with_Tactic.csv`.
+
+Key Step1 outputs include:
+
+```text
+metrics/behavior_supervision_summary.json
+metrics/behavior_alignment_metrics.json
+metrics/testset_condition_predictions.csv
+metrics/loss_summary.json
 ```
 
 All outputs are written under `outputs/`, which is ignored by git.

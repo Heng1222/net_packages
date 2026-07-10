@@ -32,6 +32,13 @@ class SplitIndices:
     test: np.ndarray
 
 
+@dataclass(slots=True)
+class BehaviorSupervision:
+    targets: np.ndarray
+    row_labels: np.ndarray
+    summary: dict[str, Any]
+
+
 def payload_to_text(value: Any, parser: str = "auto") -> str:
     if value is None:
         return ""
@@ -285,6 +292,104 @@ def load_prepared(prepared_dir: str | Path) -> tuple[np.ndarray, pd.DataFrame]:
     if len(x) != len(metadata):
         raise ValueError("Prepared x.npy and metadata.csv row counts differ.")
     return x, metadata
+
+
+def _clean_label(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, float) and np.isnan(value):
+        return None
+    label = str(value).strip()
+    return label or None
+
+
+def load_behavior_supervision(
+    config: dict[str, Any] | None,
+    metadata: pd.DataFrame,
+    condition_labels: list[str],
+    project_root: str | Path | None = None,
+) -> BehaviorSupervision:
+    targets = np.full(len(metadata), -1, dtype=np.int64)
+    row_labels = np.full(len(metadata), "", dtype=object)
+    if not config or not bool(config.get("enabled", False)):
+        return BehaviorSupervision(
+            targets,
+            row_labels,
+            {
+                "enabled": False,
+                "usable_labeled_rows": 0,
+                "matched_rows": 0,
+            },
+        )
+
+    label_col = str(config.get("label_col", "Tactic"))
+    if label_col != "Tactic":
+        raise ValueError("supervision.label_col must be 'Tactic'; no other label column is allowed here.")
+    sample_id_col = str(config.get("sample_id_col", "Session_ID"))
+    if "path" not in config:
+        raise ValueError("supervision.path is required when supervision.enabled=true.")
+    path = Path(str(config["path"]))
+    if not path.is_absolute() and project_root is not None:
+        path = Path(project_root) / path
+    path = path.expanduser().resolve()
+    if not path.is_file():
+        raise FileNotFoundError(f"Behavior supervision CSV not found: {path}")
+    if "sample_id" not in metadata.columns:
+        raise KeyError("Prepared metadata must contain sample_id for behavior supervision matching.")
+
+    frame = pd.read_csv(path, dtype=str, usecols=[sample_id_col, label_col])
+    frame[sample_id_col] = frame[sample_id_col].map(_clean_label)
+    frame[label_col] = frame[label_col].map(_clean_label)
+    frame = frame.dropna(subset=[sample_id_col, label_col])
+    if frame.empty:
+        raise ValueError(f"No non-empty {label_col} labels found in behavior supervision CSV: {path}")
+
+    conflicts = frame.groupby(sample_id_col)[label_col].nunique()
+    conflicting_ids = conflicts[conflicts > 1].index.tolist()
+    if conflicting_ids:
+        preview = ", ".join(map(str, conflicting_ids[:10]))
+        raise ValueError(f"Conflicting Tactic labels for Session_ID values: {preview}")
+    frame = frame.drop_duplicates(subset=[sample_id_col], keep="first")
+    label_lookup = dict(zip(frame[sample_id_col].astype(str), frame[label_col].astype(str), strict=True))
+    condition_to_index = {label: index for index, label in enumerate(condition_labels)}
+
+    matched_rows = 0
+    unknown_labels: dict[str, int] = {}
+    for row_index, sample_id in enumerate(metadata["sample_id"].astype(str)):
+        label = label_lookup.get(sample_id)
+        if label is None:
+            continue
+        matched_rows += 1
+        row_labels[row_index] = label
+        target = condition_to_index.get(label)
+        if target is None:
+            unknown_labels[label] = unknown_labels.get(label, 0) + 1
+            continue
+        targets[row_index] = target
+
+    usable = int((targets >= 0).sum())
+    if usable == 0:
+        raise ValueError(
+            "Behavior supervision is enabled, but no rows matched known condition labels. "
+            "Check Session_ID encoding and Tactic label names."
+        )
+    counts = pd.Series(row_labels[targets >= 0]).value_counts(sort=True).to_dict()
+    return BehaviorSupervision(
+        targets,
+        row_labels,
+        {
+            "enabled": True,
+            "path": str(path),
+            "sample_id_col": sample_id_col,
+            "label_col": label_col,
+            "golden_rows": int(len(frame)),
+            "matched_rows": int(matched_rows),
+            "usable_labeled_rows": usable,
+            "unmatched_metadata_rows": int(len(metadata) - matched_rows),
+            "labels_not_in_conditions": {str(key): int(value) for key, value in unknown_labels.items()},
+            "usable_counts_by_label": {str(key): int(value) for key, value in counts.items()},
+        },
+    )
 
 
 def make_time_split(metadata: pd.DataFrame, split_config: dict[str, Any]) -> SplitIndices:

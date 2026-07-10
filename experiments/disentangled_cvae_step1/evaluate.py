@@ -11,6 +11,7 @@ from matplotlib.lines import Line2D
 import numpy as np
 import pandas as pd
 from sklearn.decomposition import PCA
+from sklearn.metrics import accuracy_score, classification_report
 from sklearn.preprocessing import StandardScaler
 
 from .conditions import cosine_similarity_matrix
@@ -139,6 +140,43 @@ def write_condition_ablation_summary(
             }
         )
     pd.DataFrame(rows).to_csv(path, index=False)
+
+
+def behavior_alignment_metrics(
+    predictions: pd.DataFrame,
+    condition_labels: list[str],
+    gold_column: str = "gold_tactic",
+    prediction_column: str = "predicted_condition",
+    ambiguous_label: str = AMBIGUOUS_LABEL,
+) -> dict[str, Any]:
+    if gold_column not in predictions.columns:
+        return {"enabled": False, "reason": f"missing column: {gold_column}"}
+    frame = predictions.copy()
+    gold = frame[gold_column].fillna("").astype(str).str.strip()
+    valid = gold != ""
+    if not bool(valid.any()):
+        return {"enabled": True, "labeled_rows": 0}
+    y_true = gold[valid].to_numpy()
+    y_pred = frame.loc[valid, prediction_column].fillna(ambiguous_label).astype(str).to_numpy()
+    labels = list(dict.fromkeys([*condition_labels, ambiguous_label]))
+    report = classification_report(
+        y_true,
+        y_pred,
+        labels=labels,
+        output_dict=True,
+        zero_division=0,
+    )
+    exact_non_ambiguous = y_pred != ambiguous_label
+    return {
+        "enabled": True,
+        "labeled_rows": int(len(y_true)),
+        "non_ambiguous_rate": float(exact_non_ambiguous.mean()) if len(y_true) else 0.0,
+        "accuracy": float(accuracy_score(y_true, y_pred)),
+        "macro_f1": float(report.get("macro avg", {}).get("f1-score", 0.0)),
+        "weighted_f1": float(report.get("weighted avg", {}).get("f1-score", 0.0)),
+        "labels": labels,
+        "classification_report": report,
+    }
 
 
 def write_similarity_matrix(

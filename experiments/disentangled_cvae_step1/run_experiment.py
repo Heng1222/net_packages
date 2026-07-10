@@ -19,6 +19,7 @@ else:
 from experiments.disentangled_cvae_step1.conditions import load_condition_embeddings  # noqa: E402
 from experiments.disentangled_cvae_step1.data import (  # noqa: E402
     leakage_report,
+    load_behavior_supervision,
     load_prepared,
     make_time_split,
     prepare_dataset,
@@ -26,6 +27,7 @@ from experiments.disentangled_cvae_step1.data import (  # noqa: E402
 )
 from experiments.disentangled_cvae_step1.evaluate import (  # noqa: E402
     AMBIGUOUS_LABEL,
+    behavior_alignment_metrics,
     build_test_condition_predictions,
     plot_condition_similarity_heatmap,
     plot_training_reconstruction_losses,
@@ -146,6 +148,24 @@ def run_train(config: dict, run_dir: Path, device: torch.device, logger: logging
         raise ValueError(
             f"Condition dim {conditions.dimension} does not match condition_dim={config['model']['condition_dim']}."
         )
+
+    supervision = load_behavior_supervision(
+        config.get("supervision"),
+        metadata,
+        conditions.labels,
+        config.get("_meta", {}).get("project_root", PROJECT_ROOT),
+    )
+    write_json(supervision.summary, run_dir / "metrics" / "behavior_supervision_summary.json")
+    if supervision.summary.get("enabled"):
+        logger.info(
+            "Behavior supervision: usable_labeled_rows=%d matched_rows=%d source=%s",
+            int(supervision.summary.get("usable_labeled_rows", 0)),
+            int(supervision.summary.get("matched_rows", 0)),
+            supervision.summary.get("path"),
+        )
+    else:
+        logger.info("Behavior supervision disabled.")
+
     model_config = dict(config["model"])
     model_config["condition_count"] = len(conditions.labels)
     model_config["condition_dim"] = conditions.dimension
@@ -178,6 +198,7 @@ def run_train(config: dict, run_dir: Path, device: torch.device, logger: logging
         checkpoint,
         int(config.get("seed", 42)),
         logger,
+        behavior_targets=supervision.targets,
     )
     logger.info("Training summary: best_epoch=%d best_val_loss=%.6f", result.best_epoch, result.best_val_loss)
     write_json(
@@ -194,10 +215,18 @@ def run_train(config: dict, run_dir: Path, device: torch.device, logger: logging
         split.test,
         device,
         int(config["training"]["batch_size"]),
+        behavior_targets=supervision.targets,
     )
     condition_threshold = float(config.get("evaluation", {}).get("condition_threshold", 0.5))
+    prediction_metadata = metadata.copy()
+    prediction_metadata["gold_tactic"] = supervision.row_labels
+    prediction_metadata["gold_tactic_target_index"] = np.where(
+        supervision.targets >= 0,
+        supervision.targets.astype(str),
+        "",
+    )
     test_predictions = build_test_condition_predictions(
-        metadata,
+        prediction_metadata,
         split.test,
         test_outputs["gates"],
         conditions.labels,
@@ -207,6 +236,10 @@ def run_train(config: dict, run_dir: Path, device: torch.device, logger: logging
     test_predictions.to_csv(run_dir / "metrics" / "testset_condition_predictions.csv", index=False)
     write_testset_subset(test_predictions, run_dir / "metrics" / "testset_subset_100.csv")
     write_json(test_outputs["loss_summary"], run_dir / "metrics" / "loss_summary.json")
+    write_json(
+        behavior_alignment_metrics(test_predictions, conditions.labels),
+        run_dir / "metrics" / "behavior_alignment_metrics.json",
+    )
     write_condition_gate_summary(
         test_outputs["gates"],
         conditions.labels,
@@ -273,7 +306,15 @@ def run_train(config: dict, run_dir: Path, device: torch.device, logger: logging
         )
 
     logger.info("Writing report")
-    write_report(run_dir, metadata, split, conditions.labels, test_outputs["loss_summary"], conditions.metadata)
+    write_report(
+        run_dir,
+        metadata,
+        split,
+        conditions.labels,
+        test_outputs["loss_summary"],
+        conditions.metadata,
+        supervision.summary,
+    )
 
 
 def write_report(
@@ -283,8 +324,10 @@ def write_report(
     condition_labels: list[str],
     loss_summary: dict,
     condition_metadata: dict | None = None,
+    supervision_summary: dict | None = None,
 ) -> None:
     condition_metadata = condition_metadata or {}
+    supervision_summary = supervision_summary or {}
     raw_cosine = condition_metadata.get("raw_condition_cosine", {})
     transformed_cosine = condition_metadata.get("transformed_condition_cosine", {})
     lines = [
@@ -296,7 +339,13 @@ def write_report(
         f"- Train/val/test: {len(split.train)} / {len(split.val)} / {len(split.test)}",
         "- Normal (TA9000) is not a condition.",
         "- `Sess_Tactic_predict` is retained in prepared metadata only; it is not used for training.",
+        "- Optional weak supervision uses only the Step2 golden `Tactic` column.",
         "- Test-set `predicted_conditions` are derived from independent multi-label CVAE condition gates.",
+        (
+            "- Weak behavior supervision rows: "
+            f"{supervision_summary.get('usable_labeled_rows', 0)} usable / "
+            f"{supervision_summary.get('matched_rows', 0)} matched"
+        ),
         "",
         "## Condition Labels",
         "",
@@ -319,6 +368,9 @@ def write_report(
         f"- Test full reconstruction MSE: {loss_summary.get('recon_mse')}",
         f"- Test H-only reconstruction MSE: {loss_summary.get('h_only_mse')}",
         f"- Test C-only reconstruction MSE: {loss_summary.get('c_only_mse')}",
+        f"- Test behavior InfoNCE loss: {loss_summary.get('behavior_infonce_loss')}",
+        f"- Test behavior InfoNCE accuracy: {loss_summary.get('behavior_infonce_accuracy')}",
+        f"- Test residual adversary accuracy: {loss_summary.get('residual_adversary_accuracy')}",
         "",
     ]
     lines.extend(

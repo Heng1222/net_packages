@@ -60,6 +60,12 @@ conditions:
   exclude_labels:
     - "Normal (TA9000)"
 
+supervision:
+  enabled: true
+  path: "Year=2022/Step2_golden_review_2_with_Tactic.csv"
+  sample_id_col: "Session_ID"
+  label_col: "Tactic"
+
 preprocessing:
   normalization: "standard"
   batch_size: 20000
@@ -75,6 +81,8 @@ model:
   activation: "relu"
   observation_variance: 1.0
   temperature: 0.1
+  behavior_temperature: 0.1
+  residual_adversary_strength: 1.0
   utility_margin: 0.5
   residual_margin: 0.5
   weights:
@@ -85,6 +93,8 @@ model:
     gate_entropy: 0.01
     utility: 0.5
     residual_constraint: 0.5
+    behavior_infonce: 1.0
+    residual_adversary: 0.1
 
 training:
   batch_size: 128

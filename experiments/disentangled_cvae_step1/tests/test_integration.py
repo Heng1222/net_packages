@@ -34,6 +34,16 @@ class IntegrationTests(unittest.TestCase):
                 )
             csv_path = root / "step1.csv"
             pd.DataFrame(rows).to_csv(csv_path, index=False)
+            golden_rows = [
+                {
+                    "Session_ID": f"s{index}",
+                    "Tactic": "Reconnaissance (TA0043)" if index % 3 == 0 else "Execution (TA0002)",
+                }
+                for index in range(0, 90)
+                if index % 3 in {0, 1}
+            ]
+            golden_path = root / "step2_golden_review_2_with_Tactic.csv"
+            pd.DataFrame(golden_rows).to_csv(golden_path, index=False)
             config = {
                 "seed": 42,
                 "data": {
@@ -64,6 +74,12 @@ class IntegrationTests(unittest.TestCase):
                     "normalize": True,
                     "exclude_labels": ["Normal (TA9000)"],
                 },
+                "supervision": {
+                    "enabled": True,
+                    "path": str(golden_path),
+                    "sample_id_col": "Session_ID",
+                    "label_col": "Tactic",
+                },
                 "preprocessing": {"normalization": "standard", "batch_size": 50},
                 "model": {
                     "input_dim": 768,
@@ -76,6 +92,8 @@ class IntegrationTests(unittest.TestCase):
                     "activation": "relu",
                     "observation_variance": 1.0,
                     "temperature": 0.2,
+                    "behavior_temperature": 0.2,
+                    "residual_adversary_strength": 1.0,
                     "utility_margin": 0.1,
                     "residual_margin": 0.1,
                     "weights": {
@@ -86,6 +104,8 @@ class IntegrationTests(unittest.TestCase):
                         "gate_entropy": 0.01,
                         "utility": 0.1,
                         "residual_constraint": 0.1,
+                        "behavior_infonce": 0.5,
+                        "residual_adversary": 0.1,
                     },
                 },
                 "training": {
@@ -128,6 +148,8 @@ class IntegrationTests(unittest.TestCase):
             run_dir = Path(result.stdout.strip().splitlines()[-1])
             self.assertTrue((run_dir / "checkpoints" / "disentangled_cvae.pt").is_file())
             self.assertFalse((run_dir / "metrics" / "probe_metrics.json").exists())
+            self.assertTrue((run_dir / "metrics" / "behavior_supervision_summary.json").is_file())
+            self.assertTrue((run_dir / "metrics" / "behavior_alignment_metrics.json").is_file())
             self.assertTrue((run_dir / "metrics" / "condition_gate_summary.csv").is_file())
             self.assertTrue((run_dir / "metrics" / "condition_ablation_delta_mse_summary.csv").is_file())
             self.assertTrue((run_dir / "metrics" / "testset_condition_predictions.csv").is_file())
@@ -150,7 +172,11 @@ class IntegrationTests(unittest.TestCase):
             self.assertIn("val_h_only_mse", history.columns)
             self.assertIn("val_c_only_mse", history.columns)
             self.assertIn("val_gate_entropy_loss", history.columns)
+            self.assertIn("val_behavior_infonce_loss", history.columns)
+            self.assertIn("val_residual_adversary_loss", history.columns)
+            self.assertGreater(history["train_behavior_labeled_count"].max(), 0)
             predictions = pd.read_csv(run_dir / "metrics" / "testset_condition_predictions.csv")
+            self.assertIn("gold_tactic", predictions.columns)
             prob_cols = [column for column in predictions.columns if column.startswith("condition_prob__")]
             self.assertGreater(len(prob_cols), 0)
             self.assertTrue(((predictions[prob_cols] >= 0.0) & (predictions[prob_cols] <= 1.0)).all().all())

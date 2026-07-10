@@ -8,6 +8,26 @@ from torch import nn
 from torch.nn import functional as F
 
 
+class _GradientReversalFunction(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx: Any, value: torch.Tensor, strength: float) -> torch.Tensor:
+        ctx.strength = float(strength)
+        return value.view_as(value)
+
+    @staticmethod
+    def backward(ctx: Any, gradient: torch.Tensor) -> tuple[torch.Tensor, None]:
+        return -ctx.strength * gradient, None
+
+
+class GradientReversal(nn.Module):
+    def __init__(self, strength: float = 1.0) -> None:
+        super().__init__()
+        self.strength = float(strength)
+
+    def forward(self, value: torch.Tensor) -> torch.Tensor:
+        return _GradientReversalFunction.apply(value, self.strength)
+
+
 def activation_layer(name: str) -> nn.Module:
     mapping: dict[str, type[nn.Module]] = {
         "relu": nn.ReLU,
@@ -57,6 +77,8 @@ class DisentangledConditionalVAE(nn.Module):
         activation: str = "relu",
         observation_variance: float = 1.0,
         temperature: float = 0.1,
+        behavior_temperature: float = 0.1,
+        residual_adversary_strength: float = 1.0,
         utility_margin: float = 0.5,
         residual_margin: float = 0.5,
         weights: dict[str, float] | None = None,
@@ -68,12 +90,16 @@ class DisentangledConditionalVAE(nn.Module):
             raise ValueError("observation_variance must be positive.")
         if temperature <= 0:
             raise ValueError("temperature must be positive.")
+        if behavior_temperature <= 0:
+            raise ValueError("behavior_temperature must be positive.")
         self.input_dim = int(input_dim)
         self.residual_dim = int(residual_dim)
         self.condition_count = int(condition_count)
         self.condition_dim = int(condition_dim)
         self.observation_variance = float(observation_variance)
         self.temperature = float(temperature)
+        self.behavior_temperature = float(behavior_temperature)
+        self.residual_adversary_strength = float(residual_adversary_strength)
         self.utility_margin = float(utility_margin)
         self.residual_margin = float(residual_margin)
         self.weights = {
@@ -84,6 +110,8 @@ class DisentangledConditionalVAE(nn.Module):
             "gate_entropy": 0.01,
             "utility": 0.5,
             "residual_constraint": 0.5,
+            "behavior_infonce": 0.0,
+            "residual_adversary": 0.0,
         }
         if weights:
             self.weights.update({str(key): float(value) for key, value in weights.items()})
@@ -95,6 +123,8 @@ class DisentangledConditionalVAE(nn.Module):
         self.h_mu = nn.Linear(encoded_dim, self.residual_dim)
         self.h_logvar = nn.Linear(encoded_dim, self.residual_dim)
         self.gate_out = nn.Linear(encoded_dim, self.condition_count)
+        self.residual_reversal = GradientReversal(self.residual_adversary_strength)
+        self.residual_adversary = nn.Linear(self.residual_dim, self.condition_count)
 
         decoder_input = self.residual_dim + condition_flat_dim
         self.decoder_body, decoded_dim = build_mlp(
@@ -116,11 +146,13 @@ class DisentangledConditionalVAE(nn.Module):
             "activation",
             "observation_variance",
             "temperature",
+            "behavior_temperature",
+            "residual_adversary_strength",
             "utility_margin",
             "residual_margin",
             "weights",
         )
-        return cls(**{key: config[key] for key in keys})
+        return cls(**{key: config[key] for key in keys if key in config})
 
     @staticmethod
     def reparameterize(mu: torch.Tensor, logvar: torch.Tensor) -> torch.Tensor:
@@ -184,6 +216,9 @@ class DisentangledConditionalVAE(nn.Module):
     ) -> dict[str, torch.Tensor]:
         output = self.encode(x, condition_embeddings, sample=sample)
         output["x_recon"] = self.decode(output["h"], output["conditions"], output["gates"])
+        output["residual_adversary_logits"] = self.residual_adversary(
+            self.residual_reversal(output["h_mu"])
+        )
         return output
 
     def semantic_summary(self, condition_embeddings: torch.Tensor, gates: torch.Tensor) -> torch.Tensor:
@@ -215,6 +250,7 @@ class DisentangledConditionalVAE(nn.Module):
         self,
         output: dict[str, torch.Tensor],
         target: torch.Tensor,
+        behavior_targets: torch.Tensor | None = None,
     ) -> dict[str, torch.Tensor]:
         squared_error = (output["x_recon"] - target).pow(2)
         recon_nll_per_sample = 0.5 * (
@@ -252,6 +288,31 @@ class DisentangledConditionalVAE(nn.Module):
         h_only_mse = F.mse_loss(h_only, target, reduction="none").mean(dim=1)
         residual_constraint = F.relu(self.residual_margin - (h_only_mse - recon_mse_per_sample)).mean()
 
+        zero = target.new_tensor(0.0)
+        behavior_infonce = zero
+        residual_adversary = zero
+        behavior_accuracy = zero
+        residual_adversary_accuracy = zero
+        behavior_labeled_count = target.new_tensor(0.0)
+        if behavior_targets is not None:
+            labels = behavior_targets.to(device=target.device).long()
+            valid = labels >= 0
+            valid_count = int(valid.sum().item())
+            behavior_labeled_count = target.new_tensor(float(valid_count))
+            if valid_count > 0:
+                semantic = self.semantic_summary(output["conditions"], output["gates"])
+                query = F.normalize(semantic[valid], dim=1, eps=1e-8)
+                candidates = F.normalize(output["conditions"][0], dim=1, eps=1e-8)
+                logits = query @ candidates.T / self.behavior_temperature
+                behavior_infonce = F.cross_entropy(logits, labels[valid])
+                behavior_accuracy = (logits.argmax(dim=1) == labels[valid]).float().mean()
+
+                adversary_logits = output["residual_adversary_logits"][valid]
+                residual_adversary = F.cross_entropy(adversary_logits, labels[valid])
+                residual_adversary_accuracy = (
+                    adversary_logits.argmax(dim=1) == labels[valid]
+                ).float().mean()
+
         total = (
             self.weights["reconstruction"] * recon_nll
             + self.weights["kl"] * kl
@@ -260,6 +321,8 @@ class DisentangledConditionalVAE(nn.Module):
             + self.weights["gate_entropy"] * gate_entropy
             + self.weights["utility"] * utility
             + self.weights["residual_constraint"] * residual_constraint
+            + self.weights["behavior_infonce"] * behavior_infonce
+            + self.weights["residual_adversary"] * residual_adversary
         )
         return {
             "loss": total,
@@ -272,6 +335,11 @@ class DisentangledConditionalVAE(nn.Module):
             "gate_entropy_loss": gate_entropy,
             "utility_loss": utility,
             "residual_constraint_loss": residual_constraint,
+            "behavior_infonce_loss": behavior_infonce,
+            "residual_adversary_loss": residual_adversary,
+            "behavior_infonce_accuracy": behavior_accuracy,
+            "residual_adversary_accuracy": residual_adversary_accuracy,
+            "behavior_labeled_count": behavior_labeled_count,
             "recon_nll_per_sample": recon_nll_per_sample,
             "recon_mse_per_sample": recon_mse_per_sample,
             "kl_per_sample": kl_per_sample,

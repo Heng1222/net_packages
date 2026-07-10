@@ -26,6 +26,8 @@ class ModelTests(unittest.TestCase):
                 "gate_entropy": 0.01,
                 "utility": 0.5,
                 "residual_constraint": 0.5,
+                "behavior_infonce": 1.0,
+                "residual_adversary": 0.1,
             },
         )
 
@@ -44,6 +46,15 @@ class ModelTests(unittest.TestCase):
         self.assertGreaterEqual(float(losses["sparse_loss"].detach()), 0.0)
         self.assertGreaterEqual(float(losses["gate_entropy_loss"].detach()), 0.0)
         self.assertEqual(losses["ablation_delta_mse"].shape, (5, 3))
+
+        targets = torch.tensor([0, 1, -1, 2, 1], dtype=torch.long)
+        supervised_losses = model.loss(output, x, targets)
+        self.assertTrue(torch.isfinite(supervised_losses["behavior_infonce_loss"]))
+        self.assertTrue(torch.isfinite(supervised_losses["residual_adversary_loss"]))
+        self.assertEqual(float(supervised_losses["behavior_labeled_count"]), 4.0)
+        self.assertGreaterEqual(float(supervised_losses["behavior_infonce_accuracy"]), 0.0)
+        self.assertLessEqual(float(supervised_losses["behavior_infonce_accuracy"]), 1.0)
+        self.assertEqual(output["residual_adversary_logits"].shape, (5, 3))
 
 
 if __name__ == "__main__":

@@ -5,7 +5,10 @@ import unittest
 import numpy as np
 import pandas as pd
 
-from experiments.disentangled_cvae_step1.evaluate import build_test_condition_predictions
+from experiments.disentangled_cvae_step1.evaluate import (
+    behavior_alignment_metrics,
+    build_test_condition_predictions,
+)
 
 
 class ConditionPredictionTests(unittest.TestCase):
@@ -37,6 +40,20 @@ class ConditionPredictionTests(unittest.TestCase):
             frame[prob_cols].to_numpy(),
             np.asarray([[0.8, 0.2], [0.6, 0.7], [0.49, 0.2]], dtype=np.float32),
         )
+
+    def test_behavior_alignment_metrics_uses_gold_tactic(self) -> None:
+        predictions = pd.DataFrame(
+            {
+                "gold_tactic": ["Condition A", "Condition B", ""],
+                "predicted_condition": ["Condition A", "ambiguous", "Condition B"],
+            }
+        )
+        metrics = behavior_alignment_metrics(predictions, ["Condition A", "Condition B"])
+
+        self.assertTrue(metrics["enabled"])
+        self.assertEqual(metrics["labeled_rows"], 2)
+        self.assertEqual(metrics["accuracy"], 0.5)
+        self.assertIn("classification_report", metrics)
 
 
 if __name__ == "__main__":

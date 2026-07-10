@@ -25,6 +25,13 @@ TRACKED = (
     "gate_entropy_loss",
     "utility_loss",
     "residual_constraint_loss",
+    "behavior_infonce_loss",
+    "residual_adversary_loss",
+)
+
+ACCURACY_TRACKED = (
+    "behavior_infonce_accuracy",
+    "residual_adversary_accuracy",
 )
 
 
@@ -111,9 +118,15 @@ def train_model(
     checkpoint_path: Path,
     seed: int,
     logger: logging.Logger | None = None,
+    behavior_targets: np.ndarray | None = None,
 ) -> TrainingResult:
     model.to(device)
     conditions = torch.from_numpy(np.asarray(condition_matrix, dtype=np.float32)).to(device)
+    behavior_target_array = None
+    if behavior_targets is not None:
+        behavior_target_array = np.asarray(behavior_targets, dtype=np.int64)
+        if len(behavior_target_array) != len(x):
+            raise ValueError("behavior_targets must have the same row count as x.")
     optimizer = torch.optim.AdamW(
         model.parameters(),
         lr=float(training["learning_rate"]),
@@ -160,29 +173,47 @@ def train_model(
         model.train()
         train_totals = {key: 0.0 for key in TRACKED}
         train_count = 0
-        for x_batch, _ in train_loader:
+        train_accuracy_totals = {key: 0.0 for key in ACCURACY_TRACKED}
+        train_labeled_count = 0
+        for x_batch, index_batch in train_loader:
             x_batch = x_batch.to(device)
+            target_batch = None
+            if behavior_target_array is not None:
+                target_batch = torch.from_numpy(behavior_target_array[index_batch.numpy()]).to(device)
             optimizer.zero_grad(set_to_none=True)
             output = model(x_batch, conditions, sample=True)
-            losses = model.loss(output, x_batch)
+            losses = model.loss(output, x_batch, target_batch)
             losses["loss"].backward()
             optimizer.step()
             for key in TRACKED:
                 train_totals[key] += float(losses[key].detach()) * len(x_batch)
+            labeled_count = float(losses["behavior_labeled_count"].detach())
+            train_labeled_count += int(labeled_count)
+            for key in ACCURACY_TRACKED:
+                train_accuracy_totals[key] += float(losses[key].detach()) * labeled_count
             train_count += len(x_batch)
 
         model.eval()
         val_totals = {key: 0.0 for key in TRACKED}
         val_aux_totals = {"h_only_mse": 0.0, "c_only_mse": 0.0}
+        val_accuracy_totals = {key: 0.0 for key in ACCURACY_TRACKED}
+        val_labeled_count = 0
         val_count = 0
         with torch.inference_mode():
-            for x_batch, _ in val_loader:
+            for x_batch, index_batch in val_loader:
                 x_batch = x_batch.to(device)
+                target_batch = None
+                if behavior_target_array is not None:
+                    target_batch = torch.from_numpy(behavior_target_array[index_batch.numpy()]).to(device)
                 output = model(x_batch, conditions, sample=False)
-                losses = model.loss(output, x_batch)
+                losses = model.loss(output, x_batch, target_batch)
                 aux = model.auxiliary_reconstructions(output)
                 for key in TRACKED:
                     val_totals[key] += float(losses[key]) * len(x_batch)
+                labeled_count = float(losses["behavior_labeled_count"])
+                val_labeled_count += int(labeled_count)
+                for key in ACCURACY_TRACKED:
+                    val_accuracy_totals[key] += float(losses[key]) * labeled_count
                 val_aux_totals["h_only_mse"] += float(
                     torch.nn.functional.mse_loss(aux["h_only"], x_batch, reduction="none").mean(dim=1).mean()
                 ) * len(x_batch)
@@ -194,6 +225,20 @@ def train_model(
         row.update({f"train_{key}": value / max(train_count, 1) for key, value in train_totals.items()})
         row.update({f"val_{key}": value / max(val_count, 1) for key, value in val_totals.items()})
         row.update({f"val_{key}": value / max(val_count, 1) for key, value in val_aux_totals.items()})
+        row["train_behavior_labeled_count"] = float(train_labeled_count)
+        row["val_behavior_labeled_count"] = float(val_labeled_count)
+        row.update(
+            {
+                f"train_{key}": value / max(train_labeled_count, 1)
+                for key, value in train_accuracy_totals.items()
+            }
+        )
+        row.update(
+            {
+                f"val_{key}": value / max(val_labeled_count, 1)
+                for key, value in val_accuracy_totals.items()
+            }
+        )
         history.append(row)
         val_loss = row["val_loss"]
         improved = val_loss < best - 1e-10
@@ -211,6 +256,7 @@ def train_model(
             logger.info(
                 "Epoch %d/%d | train_loss=%.6f train_recon_mse=%.6f | "
                 "val_loss=%.6f val_recon_mse=%.6f val_h_only_mse=%.6f val_c_only_mse=%.6f | "
+                "val_behavior_infonce=%.6f val_behavior_acc=%.6f val_h_adv_acc=%.6f labeled=%d/%d | "
                 "best_val_loss=%.6f best_epoch=%d %s | epoch_time=%s elapsed=%s",
                 epoch,
                 max_epochs,
@@ -220,6 +266,11 @@ def train_model(
                 row["val_recon_mse"],
                 row["val_h_only_mse"],
                 row["val_c_only_mse"],
+                row["val_behavior_infonce_loss"],
+                row["val_behavior_infonce_accuracy"],
+                row["val_residual_adversary_accuracy"],
+                val_labeled_count,
+                val_count,
                 best,
                 best_epoch,
                 status,
@@ -251,21 +302,39 @@ def extract_batches(
     indices: np.ndarray,
     device: torch.device,
     batch_size: int,
+    behavior_targets: np.ndarray | None = None,
 ) -> dict[str, np.ndarray | dict[str, float]]:
     model.eval()
     conditions = torch.from_numpy(np.asarray(condition_matrix, dtype=np.float32)).to(device)
+    behavior_target_array = None
+    if behavior_targets is not None:
+        behavior_target_array = np.asarray(behavior_targets, dtype=np.int64)
+        if len(behavior_target_array) != len(x):
+            raise ValueError("behavior_targets must have the same row count as x.")
     loader = make_loader(x, indices, batch_size, False, 0)
     h_parts: list[np.ndarray] = []
     c_parts: list[np.ndarray] = []
     hc_parts: list[np.ndarray] = []
     gates: list[np.ndarray] = []
     ablations: list[np.ndarray] = []
-    totals = {"recon_mse": 0.0, "h_only_mse": 0.0, "c_only_mse": 0.0, "loss": 0.0}
+    totals = {
+        "recon_mse": 0.0,
+        "h_only_mse": 0.0,
+        "c_only_mse": 0.0,
+        "loss": 0.0,
+        "behavior_infonce_loss": 0.0,
+        "residual_adversary_loss": 0.0,
+    }
+    accuracy_totals = {key: 0.0 for key in ACCURACY_TRACKED}
+    labeled_count = 0
     count = 0
-    for x_batch, _ in loader:
+    for x_batch, index_batch in loader:
         x_batch = x_batch.to(device)
+        target_batch = None
+        if behavior_target_array is not None:
+            target_batch = torch.from_numpy(behavior_target_array[index_batch.numpy()]).to(device)
         output = model(x_batch, conditions, sample=False)
-        losses = model.loss(output, x_batch)
+        losses = model.loss(output, x_batch, target_batch)
         aux = model.auxiliary_reconstructions(output)
         h = output["h_mu"]
         c_summary = model.semantic_summary(output["conditions"], output["gates"])
@@ -276,6 +345,12 @@ def extract_batches(
         ablations.append(losses["ablation_delta_mse"].cpu().numpy())
         totals["recon_mse"] += float(losses["recon_mse"]) * len(x_batch)
         totals["loss"] += float(losses["loss"]) * len(x_batch)
+        totals["behavior_infonce_loss"] += float(losses["behavior_infonce_loss"]) * len(x_batch)
+        totals["residual_adversary_loss"] += float(losses["residual_adversary_loss"]) * len(x_batch)
+        current_labeled_count = float(losses["behavior_labeled_count"])
+        labeled_count += int(current_labeled_count)
+        for key in ACCURACY_TRACKED:
+            accuracy_totals[key] += float(losses[key]) * current_labeled_count
         totals["h_only_mse"] += float(
             torch.nn.functional.mse_loss(aux["h_only"], x_batch, reduction="none").mean(dim=1).mean()
         ) * len(x_batch)
@@ -289,5 +364,9 @@ def extract_batches(
         "hc": np.vstack(hc_parts).astype(np.float32),
         "gates": np.vstack(gates).astype(np.float32),
         "ablation_delta_mse": np.vstack(ablations).astype(np.float32),
-        "loss_summary": {key: value / max(count, 1) for key, value in totals.items()},
+        "loss_summary": {
+            **{key: value / max(count, 1) for key, value in totals.items()},
+            **{key: value / max(labeled_count, 1) for key, value in accuracy_totals.items()},
+            "behavior_labeled_count": float(labeled_count),
+        },
     }

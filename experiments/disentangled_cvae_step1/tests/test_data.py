@@ -10,6 +10,7 @@ import torch
 
 from experiments.disentangled_cvae_step1.data import (
     expected_manifest,
+    load_behavior_supervision,
     manifest_matches,
     parse_step1_label,
     prepare_dataset,
@@ -86,6 +87,53 @@ class PrepareCacheTests(unittest.TestCase):
             self.assertFalse(manifest_matches(first.manifest_path, expected))
 
 
+class BehaviorSupervisionTests(unittest.TestCase):
+    def test_load_behavior_supervision_maps_tactic_only(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            golden = root / "golden.csv"
+            pd.DataFrame(
+                {
+                    "Session_ID": ["s1", "s3", "s4"],
+                    "Tactic": [
+                        "Reconnaissance (TA0043)",
+                        "Execution (TA0002)",
+                        "Normal (TA9000)",
+                    ],
+                }
+            ).to_csv(golden, index=False)
+            metadata = pd.DataFrame({"sample_id": ["s1", "s2", "s3", "s4"]})
+            supervision = load_behavior_supervision(
+                {
+                    "enabled": True,
+                    "path": str(golden),
+                    "sample_id_col": "Session_ID",
+                    "label_col": "Tactic",
+                },
+                metadata,
+                ["Execution (TA0002)", "Reconnaissance (TA0043)"],
+            )
+
+            self.assertEqual(supervision.targets.tolist(), [1, -1, 0, -1])
+            self.assertEqual(supervision.row_labels.tolist(), ["Reconnaissance (TA0043)", "", "Execution (TA0002)", "Normal (TA9000)"])
+            self.assertEqual(supervision.summary["usable_labeled_rows"], 2)
+            self.assertEqual(supervision.summary["matched_rows"], 3)
+            self.assertEqual(supervision.summary["labels_not_in_conditions"], {"Normal (TA9000)": 1})
+
+    def test_behavior_supervision_rejects_non_tactic_label_column(self) -> None:
+        metadata = pd.DataFrame({"sample_id": ["s1"]})
+        with self.assertRaisesRegex(ValueError, "Tactic"):
+            load_behavior_supervision(
+                {
+                    "enabled": True,
+                    "path": "unused.csv",
+                    "sample_id_col": "Session_ID",
+                    "label_col": "Sess_Tactic_predict",
+                },
+                metadata,
+                ["Execution (TA0002)"],
+            )
+
+
 if __name__ == "__main__":
     unittest.main()
-

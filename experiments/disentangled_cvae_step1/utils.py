@@ -18,6 +18,7 @@ PATH_FIELDS = (
     ("data", "input_path"),
     ("data", "prepared_dir"),
     ("conditions", "path"),
+    ("supervision", "path"),
     ("output", "base_dir"),
 )
 
@@ -69,6 +70,9 @@ def _validate_config(config: dict[str, Any]) -> None:
         raise ValueError("model.condition_dim must be 768 for ModernBERT condition alignment.")
     if int(model.get("input_dim", 0)) != 768:
         raise ValueError("model.input_dim must be 768 for ModernBERT payload embeddings.")
+    supervision = config.get("supervision", {})
+    if bool(supervision.get("enabled", False)) and supervision.get("label_col", "Tactic") != "Tactic":
+        raise ValueError("supervision.label_col must be 'Tactic'.")
 
 
 def save_config(config: dict[str, Any], path: str | Path) -> None:

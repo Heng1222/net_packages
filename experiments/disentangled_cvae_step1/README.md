@@ -34,7 +34,7 @@ The cached prepared dataset contains:
 
 The raw condition embeddings are 768-dimensional vectors produced by the same `nomic-ai/modernbert-embed-base` model. They are real CVAE condition input in this version. By default, each condition is still one tactic, but its text is now built from tactic-level keywords plus the complete top-level MITRE Enterprise ATT&CK v11.3 technique names under that tactic. Technique IDs and sub-techniques are omitted from the condition text. This avoids embedding the full prose descriptions with many shared filler words and should make the raw condition cosine similarity diagnostic more informative.
 
-Because tactic descriptions still share a large common MITRE/security background, the model-used condition matrix applies a configurable geometry transform after raw embedding. The default subtracts the condition centroid, skips principal-direction removal, then row-normalizes the result. This is intended to reduce shared background semantics such as "adversary", "technique", and "network" while keeping condition-specific residual directions. For every sample, the encoder receives the payload embedding plus this full non-Normal condition matrix. The encoder learns `H` and one gate per condition. The decoder receives `H` plus the gated condition embeddings and reconstructs `x`.
+Because tactic descriptions still share a large common MITRE/security background, the model-used condition matrix applies a configurable geometry transform after raw embedding. The default subtracts the condition centroid, skips principal-direction removal, then row-normalizes the result. This is intended to reduce shared background semantics such as "adversary", "technique", and "network" while keeping condition-specific residual directions. For every sample, a payload behavior projector maps the payload embedding into this transformed condition space. Condition degrees are then computed from cosine scores between the projected payload vector and the model-used condition vectors. The encoder learns residual `H`; the decoder receives `H` plus the gated condition embeddings and reconstructs `x`.
 
 ### Condition Geometry Transform
 
@@ -50,6 +50,8 @@ geometry:
 ```
 
 This is not a contrastive loss and does not fine-tune the embedding model. It is a deterministic post-processing step applied only to the fixed condition matrix. The raw condition vectors are still saved for diagnostics, while the transformed vectors are the ones used by the encoder, decoder, gate decorrelation loss, and gated semantic summaries.
+
+The payload embedding is not directly centered by subtracting the condition centroid. Instead, a learned `payload_behavior_projector` maps standardized payload embeddings into the transformed condition geometry. This avoids assuming that raw packet text embeddings and MITRE condition text embeddings share the same centroid, while still making the final condition degrees comparable because both sides meet in the same normalized behavior space.
 
 With `remove_top_components: 0`, the transform subtracts the condition centroid and then row-normalizes each condition vector. Setting `remove_top_components` to `1` additionally removes the first shared principal direction before row-normalization.
 
@@ -68,20 +70,27 @@ Token length check on `clean_payload_list` with the ModernBERT tokenizer showed 
 ```text
 Payload text
   -> ModernBERT payload embedding x [768]
+  -> StandardScaler fitted on train payload embeddings
+  -> payload_behavior_projector
+  -> normalized q_behavior [768]
+
 Condition keywords + technique names
   -> ModernBERT raw condition embeddings
   -> common-component removal
-  -> model-used condition embeddings C_all [num_conditions, 768]
+  -> model-used condition embeddings C_behavior [num_conditions, 768]
+
+Condition degrees:
+  logits = q_behavior @ normalize(C_behavior).T
+  gates = sigmoid(logits / temperature)
 
 Encoder input:
-  concat(x, flatten(C_all))
+  concat(x, flatten(C_behavior))
 
 Encoder outputs:
   residual H [64]
-  independent sigmoid gates [num_conditions]
 
 Decoder input:
-  concat(H, flatten(gates * C_all))
+  concat(H, flatten(gates * C_behavior))
 
 Decoder output:
   reconstructed x [768]
@@ -95,7 +104,7 @@ Optional weak supervision:
 
 The loss is designed to prevent the model from hiding everything in one latent vector while still preserving reconstruction quality.
 
-`L_rec`: reconstruction negative log-likelihood. This keeps the representation faithful to the input embedding. Without it, gates could become easy to separate but unrelated to the original behavior.
+`L_rec`: reconstruction negative log-likelihood. This keeps the representation faithful to the input embedding. Without it, condition degrees could become easy to separate but unrelated to the original behavior.
 
 `L_kl`: KL on residual `H`. `H` should be a compact residual channel, not an unlimited memory bank. The KL term keeps it close to a normal prior and reduces the chance that all semantic information bypasses the condition pathway.
 
@@ -105,13 +114,13 @@ Condition cosine similarity is reported as raw and model-used diagnostic heatmap
 
 `L_sparse`: sparse gate activation. This implements the meeting requirement "do not split unless needed." It encourages each sample to use fewer condition concepts, making the explanation simpler.
 
-`L_gate_entropy`: gate binarization. Because condition use is treated as multi-label rather than a single softmax class, each gate is an independent sigmoid probability. The entropy term encourages gates to move toward clear off/on decisions instead of staying near 0.5.
+`L_gate_entropy`: gate binarization. Because condition use is treated as multi-label rather than a single softmax class, each condition degree is an independent sigmoid probability derived from payload-to-condition cosine scores. The entropy term encourages gates to move toward clear off/on decisions instead of staying near 0.5.
 
 `L_utility`: condition utility through ablation. Each gated condition is removed and the decoder is asked to reconstruct again. If removing a condition does not hurt reconstruction, the condition gate is probably decorative. The margin loss encourages active condition gates to carry useful information.
 
 `L_residual_constraint`: residual-only limitation. The decoder is run with all condition gates removed. If `H` alone reconstructs almost as well as `H + gated C`, then the condition input is not doing the work. This loss encourages useful behavior information to move into the gated condition pathway.
 
-`L_behavior_infonce`: weak behavior alignment. For rows that match the Step2 golden review file, the gated condition summary is used as the query and the condition matrix rows are the candidate prototypes. Cross-entropy over cosine logits implements InfoNCE against the golden `Tactic` target.
+`L_behavior_infonce`: weak behavior alignment. For rows that match the Step2 golden review file, the projected payload behavior vector is the query and the condition matrix rows are the candidate prototypes. Cross-entropy over cosine logits implements InfoNCE against the golden `Tactic` target.
 
 `L_residual_adversary`: residual leakage reduction. A gradient-reversal tactic classifier is attached to `H`; the classifier learns to predict the golden `Tactic`, while the encoder receives the reversed gradient so `H` becomes less tactic-informative.
 

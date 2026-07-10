@@ -72,6 +72,7 @@ class DisentangledConditionalVAE(nn.Module):
         condition_dim: int,
         encoder_hidden_dims: list[int],
         decoder_hidden_dims: list[int],
+        behavior_projector_hidden_dims: list[int] | None = None,
         dropout: float = 0.0,
         batch_norm: bool = False,
         activation: str = "relu",
@@ -102,6 +103,7 @@ class DisentangledConditionalVAE(nn.Module):
         self.residual_adversary_strength = float(residual_adversary_strength)
         self.utility_margin = float(utility_margin)
         self.residual_margin = float(residual_margin)
+        self.behavior_projector_hidden_dims = list(behavior_projector_hidden_dims or [])
         self.weights = {
             "reconstruction": 1.0,
             "kl": 1.0,
@@ -122,9 +124,16 @@ class DisentangledConditionalVAE(nn.Module):
         )
         self.h_mu = nn.Linear(encoded_dim, self.residual_dim)
         self.h_logvar = nn.Linear(encoded_dim, self.residual_dim)
-        self.gate_out = nn.Linear(encoded_dim, self.condition_count)
         self.residual_reversal = GradientReversal(self.residual_adversary_strength)
         self.residual_adversary = nn.Linear(self.residual_dim, self.condition_count)
+        self.behavior_projector_body, behavior_projector_dim = build_mlp(
+            self.input_dim,
+            self.behavior_projector_hidden_dims,
+            activation,
+            dropout,
+            batch_norm,
+        )
+        self.behavior_projector_out = nn.Linear(behavior_projector_dim, self.condition_dim)
 
         decoder_input = self.residual_dim + condition_flat_dim
         self.decoder_body, decoded_dim = build_mlp(
@@ -141,6 +150,7 @@ class DisentangledConditionalVAE(nn.Module):
             "condition_dim",
             "encoder_hidden_dims",
             "decoder_hidden_dims",
+            "behavior_projector_hidden_dims",
             "dropout",
             "batch_norm",
             "activation",
@@ -178,6 +188,22 @@ class DisentangledConditionalVAE(nn.Module):
             return condition_embeddings
         raise ValueError("condition_embeddings must be 2D or 3D.")
 
+    def project_payload_behavior(self, x: torch.Tensor) -> torch.Tensor:
+        hidden = self.behavior_projector_body(x)
+        return F.normalize(self.behavior_projector_out(hidden), dim=1, eps=1e-8)
+
+    def behavior_condition_logits(
+        self,
+        behavior_query: torch.Tensor,
+        condition_embeddings: torch.Tensor,
+    ) -> torch.Tensor:
+        conditions = self._expand_conditions(condition_embeddings, len(behavior_query))
+        normalized_conditions = F.normalize(conditions, dim=2, eps=1e-8)
+        return torch.bmm(
+            normalized_conditions,
+            behavior_query.unsqueeze(2),
+        ).squeeze(2)
+
     def encode(
         self,
         x: torch.Tensor,
@@ -190,13 +216,16 @@ class DisentangledConditionalVAE(nn.Module):
         h_mu = self.h_mu(hidden)
         h_logvar = self.h_logvar(hidden).clamp(min=-30.0, max=20.0)
         h = self.reparameterize(h_mu, h_logvar) if sample else h_mu
-        gate_logits = self.gate_out(hidden)
+        behavior_query = self.project_payload_behavior(x)
+        gate_logits = self.behavior_condition_logits(behavior_query, conditions)
         gates = torch.sigmoid(gate_logits / self.temperature)
         return {
             "h": h,
             "h_mu": h_mu,
             "h_logvar": h_logvar,
             "conditions": conditions,
+            "behavior_query": behavior_query,
+            "behavior_logits": gate_logits / self.behavior_temperature,
             "gate_logits": gate_logits,
             "gates": gates,
         }
@@ -300,10 +329,7 @@ class DisentangledConditionalVAE(nn.Module):
             valid_count = int(valid.sum().item())
             behavior_labeled_count = target.new_tensor(float(valid_count))
             if valid_count > 0:
-                semantic = self.semantic_summary(output["conditions"], output["gates"])
-                query = F.normalize(semantic[valid], dim=1, eps=1e-8)
-                candidates = F.normalize(output["conditions"][0], dim=1, eps=1e-8)
-                logits = query @ candidates.T / self.behavior_temperature
+                logits = output["behavior_logits"][valid]
                 behavior_infonce = F.cross_entropy(logits, labels[valid])
                 behavior_accuracy = (logits.argmax(dim=1) == labels[valid]).float().mean()
 

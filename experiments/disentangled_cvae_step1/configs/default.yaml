@@ -76,6 +76,7 @@ model:
   condition_dim: 768
   encoder_hidden_dims: [1024, 512]
   decoder_hidden_dims: [1024, 512]
+  behavior_projector_hidden_dims: [512]
   dropout: 0.1
   batch_norm: true
   activation: "relu"

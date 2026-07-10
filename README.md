@@ -136,7 +136,7 @@ uv run python experiments\disentangled_cvae_step1\run_experiment.py `
   --stage all
 ```
 
-The Step1 disentangled CVAE uses reconstruction plus condition-gate regularization, and now optionally aligns behavior gates with Step2 golden `Tactic` labels through an InfoNCE-style objective. It also trains a gradient-reversal residual adversary so the residual `H` space is discouraged from carrying tactic information. The default config enables this weak supervision from `Year=2022/Step2_golden_review_2_with_Tactic.csv`.
+The Step1 disentangled CVAE uses reconstruction plus condition-gate regularization. A payload behavior projector maps payload embeddings into the transformed condition geometry, and condition degrees are computed from payload-to-condition cosine scores. The experiment optionally aligns that projected behavior vector with Step2 golden `Tactic` labels through an InfoNCE-style objective. It also trains a gradient-reversal residual adversary so the residual `H` space is discouraged from carrying tactic information. The default config enables this weak supervision from `Year=2022/Step2_golden_review_2_with_Tactic.csv`.
 
 Key Step1 outputs include:
 

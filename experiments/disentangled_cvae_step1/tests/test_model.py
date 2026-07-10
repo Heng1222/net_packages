@@ -16,6 +16,7 @@ class ModelTests(unittest.TestCase):
             condition_dim=768,
             encoder_hidden_dims=[32],
             decoder_hidden_dims=[32],
+            behavior_projector_hidden_dims=[16],
             batch_norm=False,
             observation_variance=1.0,
             weights={
@@ -38,9 +39,13 @@ class ModelTests(unittest.TestCase):
         output = model(x, conditions, sample=False)
         self.assertEqual(output["h"].shape, (5, 8))
         self.assertEqual(output["conditions"].shape, (5, 3, 768))
+        self.assertEqual(output["behavior_query"].shape, (5, 768))
+        self.assertEqual(output["behavior_logits"].shape, (5, 3))
         self.assertEqual(output["gate_logits"].shape, (5, 3))
         self.assertEqual(output["gates"].shape, (5, 3))
         self.assertEqual(output["x_recon"].shape, (5, 768))
+        expected_logits = torch.nn.functional.normalize(conditions, dim=1) @ output["behavior_query"].T
+        torch.testing.assert_close(output["gate_logits"].T, expected_logits)
         losses = model.loss(output, x)
         self.assertTrue(torch.isfinite(losses["loss"]))
         self.assertGreaterEqual(float(losses["sparse_loss"].detach()), 0.0)

@@ -87,6 +87,7 @@ class IntegrationTests(unittest.TestCase):
                     "condition_dim": 768,
                     "encoder_hidden_dims": [32],
                     "decoder_hidden_dims": [32],
+                    "behavior_projector_hidden_dims": [16],
                     "dropout": 0.0,
                     "batch_norm": False,
                     "activation": "relu",

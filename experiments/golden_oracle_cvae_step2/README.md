@@ -1,5 +1,29 @@
 # Golden-only Oracle / Predicted-Gate CVAE 前導實驗
 
+## 先用一句話理解這個實驗
+
+我們手上有 2,000 筆已經人工判斷過 Tactic 的 payload。這個實驗先不處理完整
+40 萬筆資料，而是用這批小型答案集確認：**模型能不能把 payload 中和 Tactic 有關
+的部分交給 condition 表示，把其他共同資訊放進 H，最後還能自己判斷 Tactic。**
+
+可以把整個實驗想成整理一箱混在一起的零件：
+
+- Payload embedding 是每箱零件壓縮後的「數位指紋」。
+- Tactic condition 是每種攻擊目的的「有名字參考卡」。
+- Gate 是每張參考卡前面的「音量旋鈕」；越大代表模型越想使用該 Tactic。
+- H 是「其他雜項收納盒」，保存協定、格式、來源等不能用 Tactic 解釋的資訊。
+- Decoder 要拿 H 和被打開的 Tactic 旋鈕，把原本的 payload 指紋拼回來。
+
+本實驗先做開卷與閉卷兩種測驗：
+
+```text
+開卷（Oracle）：直接告訴模型正確 Tactic，看 condition pathway 本身有沒有用。
+閉卷（Predicted Gate）：不給答案，要求模型從 payload 自己選 Tactic。
+```
+
+如果開卷都沒有改善，代表架構本身不值得繼續。如果開卷有效、閉卷無效，代表
+condition pathway 可用，但「從 payload 找到正確 condition」這一步仍需修正。
+
 ## 1. 實驗目的
 
 這個實驗只使用已人工標記的：
@@ -32,6 +56,203 @@ experiments/golden_oracle_cvae_step2/
 tests，輸出寫到 `outputs/golden_oracle_cvae_step2/`。它不修改既有
 `disentangled_cvae_step1` 或 `ae_cvae_tactic` 實驗；只重用既有且不改動的 text
 embedder、condition loader、plot 與通用 output helpers。
+
+### 1.1 第一次閱讀時需要知道的名詞
+
+#### Payload embedding (`x`)
+
+ModernBERT 把 payload 壓縮成 768 個浮點數。它不是人能直接閱讀的 Tactic，而是一個
+保留文字特徵的向量。兩個行為相近的 payload，embedding 通常也比較接近。
+
+
+#### Condition / condition embedding (`C`)
+
+每個 Tactic 的文字參考卡。程式將該 Tactic 的 keywords 與 technique names 交給同一
+ModernBERT，得到一個固定向量。它的用途是讓每個 gate 維度有名字與語意，不只是
+匿名的 latent dimension。
+
+#### Gate (`g`)
+
+介於 0 和 1 的分數，代表模型想使用某個 condition 的程度。本實驗的 gates 尚未做
+機率校準，所以 `0.8` 只能說「模型強烈使用這個 condition」，不能說「有 80% 是這個
+Tactic」。
+
+#### Residual latent (`H`)
+
+模型的其他資訊收納盒。理想上，Tactic 資訊走 condition/gate pathway；協定格式、
+一般文字結構和其他非 Tactic 特徵留在 H。若 H 可以單獨重建所有內容，代表 condition
+只是裝飾，解耦失敗。
+
+
+#### Reconstruction MSE
+
+重建向量和原向量的平均平方誤差，越低越好。它只表示資訊保存得好，不表示 Tactic
+一定分類正確。
+
+#### Oracle
+
+Oracle 是「已知正確答案」的模型。Test 時直接把 gold Tactic condition 餵給 decoder，
+用來測 condition pathway 的理論上限。Oracle 不能拿來宣稱模型會自動分類。
+
+#### Predicted-Gate model
+
+真正的閉卷測驗。Test 時只看到 payload embedding，必須自己算 gates，再交給 decoder。
+這個模型的分類結果才接近未來完整 Step1 inference。
+
+#### Plain classifier
+
+只做 `payload embedding -> Tactic` 的一般分類器，不做 H/condition reconstruction。
+它是重要比較基準：若 plain classifier 很好而 gate model 很差，代表資料本身有分類
+資訊，但我們的 condition/gate 設計尚未把資訊用好。
+
+#### Zero / Shuffled condition
+
+- Zero：把所有 condition 關掉，檢查只用 H 能重建多少。
+- Shuffled：故意餵其他 sample 的 Tactic，檢查「錯誤 condition」是否比正確答案差。
+
+
+#### Condition gain / ablation delta
+
+把 condition 關掉後，MSE 增加多少：
+
+```text
+condition gain = zero-condition MSE - full-condition MSE
+```
+
+正值表示 condition 有幫助；接近 0 表示 decoder 幾乎沒有使用它；負值表示該
+condition 反而造成干擾。
+
+---
+
+## 目前實驗結果：2026-07-11_151654
+
+### 這次用了哪些資料？
+
+排除 conflicting payload、依 payload hash 去重並移除低 support labels 後，共使用
+1,508 筆 unique payloads：
+
+| Tactic | Rows |
+| --- | ---: |
+| Discovery | 527 |
+| Initial Access | 267 |
+| Credential Access | 262 |
+| Reconnaissance | 177 |
+| Collection | 122 |
+| Normal | 68 |
+| Command and Control | 46 |
+| Execution | 39 |
+
+`Persistence` 16 筆與 `Defense Evasion` 2 筆因不足 20 筆而沒有放進本輪模型。
+
+Split 為 train 904、validation 302、test 302。三個 split 的 payload hash overlap 都是
+0，沒有完全相同 payload 跨 split 的直接 leakage。
+
+### 最重要的結果
+
+| Model/control | Result | 白話解讀 |
+| --- | ---: | --- |
+| Plain classifier macro F1 | 0.8172 | Payload embedding 本身有很好的 Tactic 分類資訊 |
+| Predicted-gate macro F1 | 0.6600 | Gates 有分類能力，但仍落後一般分類器 |
+| Majority macro F1 | 0.0645 | Predicted model 明顯不是只猜最多數類別 |
+| Oracle gold MSE | 0.5273 | 已知正確 condition 時的 reconstruction |
+| Oracle zero MSE | 0.8099 | 關掉 condition 明顯變差 |
+| Oracle shuffled MSE | 1.0095 | 餵錯 condition 比完全不餵還差 |
+| Predicted-gate MSE | 0.5310 | 幾乎追上 Oracle reconstruction |
+| Predicted zero MSE | 1.0399 | Predicted model 非常依賴 gates |
+
+由這些數字可得到：
+
+```text
+Oracle zero gain       = 0.8099 - 0.5273 = 0.2826
+Oracle shuffled gain   = 1.0095 - 0.5273 = 0.4822
+Predicted condition gain = 1.0399 - 0.5310 = 0.5089
+```
+
+因此，**condition pathway capacity 已通過**：正確 Tactic condition 確實幫助
+reconstruction，而且錯誤 condition 會造成明顯傷害。
+
+### Plain classifier 表現
+
+Plain classifier test accuracy 為 0.8079、macro F1 為 0.8172。大多數 supported
+classes 都能分類，表示 ModernBERT payload embeddings 中確實存在和人工 Tactic
+label 有關的資訊。
+
+表現較弱的是 Reconnaissance，F1 約 0.4932。Command and Control 與 Execution 的
+分數雖高，但 test support 分別只有 9 和 8，不能過度解讀單次結果。
+
+### Predicted gates 表現
+
+Predicted-gate test accuracy 為 0.7914，但 macro F1 只有 0.6600。主要問題：
+
+- Normal precision、recall、F1 全部是 0。
+- 14 筆 Normal 全被判成 malicious Tactic。
+- Reconnaissance recall 約 0.4571，許多被判成 Discovery。
+- Collection recall 約 0.56。
+- Credential Access、Initial Access、Discovery 已有不錯表現。
+
+如果先排除 Normal，malicious Tactics 的 gates 已具有相當分類能力；但完整系統不能
+接受 Normal recall 0，否則會產生大量 false alarms。
+
+### 為什麼 reconstruction 很好，分類卻沒有同樣好？
+
+Predicted-gate MSE 0.5310 幾乎等於 Oracle 0.5273，而且 predicted condition gain
+0.5089 甚至高於 Oracle gain 0.2826。這不是單純的好消息，也是一個重要警訊。
+
+目前 reconstruction loss 的 gradient 可以回頭修改 gate projector。模型可能學到：
+
+```text
+gate = Tactic evidence + 額外 payload reconstruction code
+```
+
+也就是七個連續 gates 被當成另一個小型 latent channel。Decoder 很會使用這些數字，
+所以 reconstruction 很好；但 gate 值不一定只代表它名字對應的 Tactic。這種現象稱為
+side-channel：資訊走了我們提供的通道，但不完全遵守我們希望的語意。
+
+### Training curve 告訴了什麼？
+
+Oracle 的 validation reconstruction 從約 1.009 穩定下降到 0.518，condition gain 從
+約 0.005 增加到 0.271。Oracle 到 epoch 100 仍在改善，沒有前一個完整 Step1 run 那種
+validation reconstruction 持續惡化的現象。
+
+Predicted model 的 validation reconstruction 也持續改善，但 gate supervision loss
+約在 epoch 10–20 就不再改善。Total loss 最後仍因 reconstruction 下降而選到 epoch
+100。換句話說，目前 checkpoint 選的是「最會重建」的模型，不一定是「Tactic gates
+最準」的模型。
+
+Plain classifier 的最佳 epoch 是 19，之後 train loss 繼續下降、validation 不再改善，
+early stopping 正常保留了較好的 checkpoint。
+
+### 每個 Oracle condition 都有用嗎？
+
+所有 supported malicious Tactics 的 mean ablation delta 都是正值：
+
+| Tactic | Mean delta MSE |
+| --- | ---: |
+| Credential Access | 0.9139 |
+| Execution | 0.5940 |
+| Initial Access | 0.2897 |
+| Command and Control | 0.1729 |
+| Collection | 0.1267 |
+| Reconnaissance | 0.0975 |
+| Discovery | 0.0884 |
+
+這表示 Oracle decoder 對每個 gold condition 都有使用，不是只有某一兩個類別有效。
+不同數值不可直接解讀成 Tactic 的「重要程度」，因為各類 embedding variance、樣本數
+和 reconstruction 難度不同。
+
+### 本輪判定
+
+| 問題 | 判定 |
+| --- | --- |
+| Payload embedding 是否含 Tactic 分類資訊？ | **通過**，plain classifier macro F1 0.8172 |
+| Gold condition pathway 是否有用？ | **通過**，gold 明顯優於 zero/shuffled |
+| Predicted condition 是否被 decoder 使用？ | **通過**，condition gain 0.5089 |
+| Predicted gates 是否已是乾淨的 Tactic evidence？ | **尚未通過**，存在 side-channel 風險 |
+| Normal 是否可用？ | **未通過**，recall 0 |
+| 是否可直接進完整 Step1 大規模訓練？ | **暫緩**，先修正 gate semantics 與 Normal |
+
+目前正確結論是：**架構方向值得繼續，但下一步不是立刻大量標記；應先把 gate
+classifier 與 reconstruction 解耦，確認 gates 只攜帶 Tactic 語意。**
 
 ---
 
@@ -641,11 +862,3 @@ golden_oracle_cvae_step2/
 - Oracle condition-use constraint 仍使用 zero-condition intervention；未來可加入
   condition dropout。
 - 類別不平衡與低 support labels 仍需更多人工 review。
-
-本實驗通過後的下一步：
-
-1. 對 3 個以上 seeds 重複實驗並彙整 mean ± std。
-2. 加入 random condition embedding 與 learned class-ID controls。
-3. 加入 calibration、macro-AUPRC 與 H leakage probe。
-4. 補標 rare/unsupported Tactics 與 chronological Step1 test window。
-5. 將通過的 compact architecture 與 weights 移植到完整 Step1 experiment。

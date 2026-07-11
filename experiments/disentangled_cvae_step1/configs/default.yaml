@@ -97,7 +97,8 @@ model:
     utility: 0.0
     residual_constraint: 0.1
     behavior_infonce: 1.0
-    residual_adversary: 0.0
+    # Keep Tactic information out of residual H during the baseline run.
+    residual_adversary: 0.1
 
 training:
   batch_size: 128

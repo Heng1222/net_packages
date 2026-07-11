@@ -102,7 +102,7 @@ flowchart LR
     DECIN --> DEC[Decoder MLP<br/>10,048 → 1,024 → 512 → 768]
     DEC --> XR[重建 x_hat<br/>B × 768]
 
-    MU -. Gradient Reversal .-> ADV[Residual adversary<br/>64 → 13]
+    MU -->|Gradient Reversal| ADV[Residual adversary<br/>64 → 13]
 ```
 
 ### 張量速查表
@@ -175,13 +175,13 @@ Decoder 必須同時利用 residual 與 condition 路徑重建 `x`。如果把 g
 
 ### 5. Residual adversary
 
-可選的 adversary 嘗試從 `h_mu` 預測 Tactic：
+Residual adversary 嘗試從 `h_mu` 預測 Tactic：
 
 ```text
 h_mu → Gradient Reversal → Linear(64, 13)
 ```
 
-分類器本身想把 Tactic 猜對；gradient reversal 會把回到 encoder 的梯度反向，迫使 `H` 少帶一些 Tactic 訊息。預設 feasibility baseline 的權重是 `0.0`，所以雖然模組存在，預設不會影響總 loss。
+分類器本身想把 Tactic 猜對；gradient reversal 會把回到 encoder 的梯度反向，迫使 `H` 少帶一些 Tactic 訊息。目前 baseline 的 `residual_adversary` 權重是 `0.1`，因此這條路徑會參與訓練；`residual_adversary_strength = 1.0` 則控制反轉梯度的倍率。
 
 ## 資料如何進入實驗
 
@@ -298,36 +298,46 @@ L_behavior = CrossEntropy(logits, golden_tactic_index)
 > [!WARNING]
 > 時間切分後，golden labels 不一定會落在 test window。請先看 `behavior_supervision_by_split.json` 的 `semantic_test_is_valid`。如果是 `false`，test 的 reconstruction 仍可分析，但 accuracy/F1 不能用來證明 gate 的 Tactic 語意正確。
 
-## Loss functions：每一項在防什麼
+## Loss functions：目前哪些真的有作用
 
-總 loss：
+以下 `[x]` 表示該項在目前 baseline 的權重是 `0.0`，**這次訓練不會作用，可以先跳過**。流程圖也不畫這些停用項目。
+
+目前實際參與反向傳播的總 loss 是：
 
 ```text
 L_total =
     w_rec       × L_reconstruction
   + w_kl        × L_KL
-  + w_decor     × L_decorrelation
-  + w_sparse    × L_sparse
-  + w_entropy   × L_gate_entropy
-  + w_utility   × L_utility
   + w_residual  × L_residual_constraint
   + w_behavior  × L_behavior_infonce
   + w_adversary × L_residual_adversary
 ```
 
-| Loss | 白話目的 | 過強時的風險 | 預設權重 |
+| 目前啟用的 Loss | 白話目的 | 過強時的風險 | 目前權重 |
 | --- | --- | --- | ---: |
 | Reconstruction NLL | 讓 `H + C` 保留原始 embedding 資訊 | 只追求重建，未必真的 disentangle | 1.0 |
 | KL | 讓 `H` 接近標準常態、限制 residual 容量 | posterior collapse，`H` 變得沒資訊 | 1.0 |
-| Decorrelation | 懲罰相似 conditions 同時打開 | 真實 multi-tactic 行為也可能被壓掉 | 0.0 |
-| Sparse | 讓平均 gate 較小 | 所有 gate 都關閉 | 0.0 |
-| Gate entropy | 讓 gate 遠離模糊的 0.5 | 過早做出錯誤但很有信心的選擇 | 0.0 |
-| Utility | 打開的 condition 被消融時，重建應變差 | 計算量增加，可能硬迫 decoder 依賴 condition | 0.0 |
 | Residual constraint | 完整重建應比 H-only 至少好一個 margin | 可能用人為方式放大 condition 依賴 | 0.1 |
 | Behavior InfoNCE | 讓 gate 語意對齊 golden Tactic | 標籤少或不平衡時容易偏向多數類 | 1.0 |
-| Residual adversary | 讓 `H` 難以預測 Tactic | 可能連重建需要的訊息一起移除 | 0.0 |
+| Residual adversary | 讓 `H` 難以預測 Tactic | 可能連重建需要的訊息一起移除 | 0.1 |
 
-預設 `loss_profile: feasibility_baseline_v1` 代表先驗證最基本的三件事：能不能重建、golden label 能不能對齊 condition、condition 路徑有沒有被使用。`loss_profile` 本身是實驗名稱；真正決定運算的是 `model.weights`。
+目前仍使用 `loss_profile: feasibility_baseline_v1` 這個實驗名稱，驗證能不能重建、golden label 能不能對齊 condition、condition 路徑有沒有被使用，以及 `H` 能否減少 Tactic leakage。`loss_profile` 本身只是名稱；真正決定運算的是 `model.weights`。
+
+### [x] Decorrelation loss（目前權重 0.0，可跳過）
+
+原本用來懲罰「語意相似的 conditions 同時打開」。它可能減少重複 gate，但也可能錯誤壓制真實的 multi-tactic 行為，因此 baseline 暫時停用。
+
+### [x] Sparse loss（目前權重 0.0，可跳過）
+
+它會最小化所有 gates 的平均值，鼓勵每筆 payload 只打開少數 conditions。過強時可能造成所有 gates 都關閉，所以 baseline 暫時停用。
+
+### [x] Gate entropy loss（目前權重 0.0，可跳過）
+
+它會把 gates 從模糊的 `0.5` 推向 `0` 或 `1`。模型尚未學到可靠語意前就加入，可能只讓錯誤預測變得更有信心，因此 baseline 暫時停用。
+
+### [x] Utility loss（目前權重 0.0，可跳過）
+
+它要求被打開的 condition 一旦遭到消融，重建 MSE 至少惡化指定 margin。這會增加每個 batch 的 decoder 計算量，也可能人為迫使 decoder 依賴 condition，因此 baseline 暫時只在 evaluation 計算消融結果，不把它加進 training loss。
 
 ### 兩個容易混淆的 reconstruction loss
 
@@ -389,7 +399,7 @@ delta_mse_i = MSE(ablated_i, x) - MSE(full, x)
 
 ### 5. `H` 是否偷藏 Tactic
 
-`residual_adversary_accuracy` 是訓練內的線性 adversary 診斷。理想上，開啟 adversary 後它不應遠高於合理 baseline；但線性分類失敗不代表 nonlinear probe 也找不到 Tactic，所以它不是完整的 leakage 證明。
+`residual_adversary_accuracy` 是訓練內的線性 adversary 診斷。目前 adversary 已啟用；理想上它的 accuracy 不應遠高於合理 baseline。但線性分類失敗不代表 nonlinear probe 也找不到 Tactic，所以它不是完整的 leakage 證明。
 
 ## 如何執行
 

@@ -102,9 +102,9 @@ model:
 
 training:
   batch_size: 128
-  max_epochs: 100
-  learning_rate: 0.0003
-  weight_decay: 0.0001
+  max_epochs: 200
+  learning_rate: 0.0005
+  weight_decay: 0.001
   early_stopping_patience: 15
   num_workers: 0
   device: "auto"

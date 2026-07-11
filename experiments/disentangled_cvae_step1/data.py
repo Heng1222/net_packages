@@ -413,6 +413,35 @@ def make_time_split(metadata: pd.DataFrame, split_config: dict[str, Any]) -> Spl
     return SplitIndices(train.astype(np.int64), val.astype(np.int64), test.astype(np.int64))
 
 
+def behavior_supervision_split_summary(
+    supervision: BehaviorSupervision,
+    split: SplitIndices,
+) -> dict[str, Any]:
+    """Report whether semantic supervision can actually validate each data split."""
+    rows: dict[str, Any] = {}
+    for name, indices in (("train", split.train), ("val", split.val), ("test", split.test)):
+        labels = supervision.row_labels[indices]
+        targets = supervision.targets[indices]
+        usable_labels = labels[targets >= 0]
+        counts = pd.Series(usable_labels, dtype="object").value_counts(sort=True).to_dict()
+        rows[name] = {
+            "rows": int(len(indices)),
+            "matched_golden_rows": int(np.count_nonzero(labels != "")),
+            "usable_condition_labels": int(np.count_nonzero(targets >= 0)),
+            "counts_by_label": {str(key): int(value) for key, value in counts.items()},
+        }
+    return {
+        "splits": rows,
+        "semantic_test_is_valid": bool(rows["test"]["usable_condition_labels"] > 0),
+        "warning": (
+            "No usable golden Tactic labels occur in the test split; test gate classification metrics "
+            "cannot validate semantic alignment."
+            if rows["test"]["usable_condition_labels"] == 0
+            else None
+        ),
+    }
+
+
 def leakage_report(metadata: pd.DataFrame, split: SplitIndices) -> dict[str, Any]:
     split_by_index = np.full(len(metadata), "", dtype=object)
     split_by_index[split.train] = "train"

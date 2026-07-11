@@ -107,12 +107,12 @@ class DisentangledConditionalVAE(nn.Module):
         self.weights = {
             "reconstruction": 1.0,
             "kl": 1.0,
-            "decorrelation": 0.1,
-            "sparse": 0.001,
-            "gate_entropy": 0.01,
-            "utility": 0.5,
-            "residual_constraint": 0.5,
-            "behavior_infonce": 0.0,
+            "decorrelation": 0.0,
+            "sparse": 0.0,
+            "gate_entropy": 0.0,
+            "utility": 0.0,
+            "residual_constraint": 0.1,
+            "behavior_infonce": 1.0,
             "residual_adversary": 0.0,
         }
         if weights:
@@ -280,6 +280,7 @@ class DisentangledConditionalVAE(nn.Module):
         output: dict[str, torch.Tensor],
         target: torch.Tensor,
         behavior_targets: torch.Tensor | None = None,
+        compute_diagnostics: bool = False,
     ) -> dict[str, torch.Tensor]:
         squared_error = (output["x_recon"] - target).pow(2)
         recon_nll_per_sample = 0.5 * (
@@ -309,15 +310,26 @@ class DisentangledConditionalVAE(nn.Module):
             + (1.0 - gate_probs) * (1.0 - gate_probs).log()
         ).mean()
 
-        deltas = self.ablation_deltas(output, target)
-        utility_margin = F.relu(self.utility_margin - deltas)
-        utility = (utility_margin * output["gates"]).sum() / output["gates"].sum().clamp_min(1e-6)
-
-        h_only = self.auxiliary_reconstructions(output)["h_only"]
-        h_only_mse = F.mse_loss(h_only, target, reduction="none").mean(dim=1)
-        residual_constraint = F.relu(self.residual_margin - (h_only_mse - recon_mse_per_sample)).mean()
-
         zero = target.new_tensor(0.0)
+        if self.weights["utility"] > 0.0 or compute_diagnostics:
+            deltas = self.ablation_deltas(output, target)
+        else:
+            deltas = target.new_zeros((len(target), self.condition_count))
+        if self.weights["utility"] > 0.0:
+            utility_margin = F.relu(self.utility_margin - deltas)
+            utility = (utility_margin * output["gates"]).sum() / output["gates"].sum().clamp_min(1e-6)
+        else:
+            utility = zero
+
+        if self.weights["residual_constraint"] > 0.0:
+            h_only = self.auxiliary_reconstructions(output)["h_only"]
+            h_only_mse = F.mse_loss(h_only, target, reduction="none").mean(dim=1)
+            residual_constraint = F.relu(
+                self.residual_margin - (h_only_mse - recon_mse_per_sample)
+            ).mean()
+        else:
+            residual_constraint = zero
+
         behavior_infonce = zero
         residual_adversary = zero
         behavior_accuracy = zero

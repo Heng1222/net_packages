@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import patch
 
 import torch
 
@@ -60,6 +61,16 @@ class ModelTests(unittest.TestCase):
         self.assertGreaterEqual(float(supervised_losses["behavior_infonce_accuracy"]), 0.0)
         self.assertLessEqual(float(supervised_losses["behavior_infonce_accuracy"]), 1.0)
         self.assertEqual(output["residual_adversary_logits"].shape, (5, 3))
+
+    def test_zero_weight_utility_skips_expensive_training_ablations(self) -> None:
+        model = self._model()
+        model.weights["utility"] = 0.0
+        x = torch.randn(5, 768)
+        output = model(x, torch.randn(3, 768), sample=False)
+        with patch.object(model, "ablation_deltas", side_effect=AssertionError("unexpected ablation")):
+            losses = model.loss(output, x)
+        self.assertEqual(losses["ablation_delta_mse"].shape, (5, 3))
+        self.assertTrue(torch.count_nonzero(losses["ablation_delta_mse"]) == 0)
 
 
 if __name__ == "__main__":

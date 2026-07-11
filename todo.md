@@ -1,289 +1,515 @@
-# Condition 解偶改善 TODO
+# Disentangled CVAE Step1：測試與訓練操作清單
 
-本文記錄後續要如何改善 `experiments/disentangled_cvae_step1` 的設計，使模型更接近原本期待的 Condition 解偶：不是只讓 condition embedding 幫助 reconstruction，而是讓 gate 能夠更可信地表示「某筆 payload 啟動了哪些惡意行為概念」。
+這份文件的目標是依序回答以下問題：
 
-目前設計重點：
+1. 專案、資料與 embedding cache 是否完整？
+2. `H + gated conditions` 架構在可識別資料上是否做得到解耦？
+3. 最小 loss baseline 在真實 payload 上，gate 是否對準 Tactic？
+4. Decoder 是否真的使用 condition，而不是把所有資訊藏進 `H`？
+5. Baseline 通過後，加入 regularization 的完整模型是否真的更好？
 
-- `payload_list` 會被 embed 成 payload embedding `x`。
-- condition descriptions 會被 embed 成 condition matrix `C_all`。
-- encoder 看 `concat(x, flatten(C_all))`，輸出 residual `H` 和每個 condition 的 `gates`。
-- decoder 看 `concat(H, flatten(gates * C_all))` 來 reconstruct `x`。
+> 重要：gate 目前只能稱為 **Tactic evidence score**。在通過 held-out
+> calibration 以前，不可解讀為「payload 有 70% Discovery」。
 
-目前主要風險：
+---
 
-- `C_all` 對每筆 sample 都一樣，encoder 可能只把它當成固定背景資訊或 bias。
-- gate 可能只是 reconstruction shortcut，不一定是在做 payload 與 condition 的語意比對。
-- 一般 embedding model 不保證 raw/semi-structured payload embedding 與 MITRE tactic description embedding 已經在同一個安全語意空間中對齊。
-- reconstruction 做得好，不等於 condition 分解語意正確。
+## 0. 固定實驗條件
 
-> 目前先保留既有 condition set；condition schema 與粒度調整不列入本 TODO。
+所有命令都在 repository root 執行：
 
-## Step 1. 建立 Payload-Condition Explicit Alignment
-
-### 要修正什麼
-
-目前 payload embedding `x` 和 condition embedding `C` 只是使用同一個 embedding model 產生，這只能建立很弱的共享語意空間假設。後續應加入明確的 alignment 訓練或評估資料，使：
-
-```text
-sim(payload, correct_condition) 高
-sim(payload, wrong_condition) 低
+```powershell
+Set-Location "C:\Users\user\Desktop\Lab\net packages"
+uv sync
 ```
 
-可行資料來源：
+確認 PyTorch 是否看到 GPU：
 
-- 人工 golden review 小樣本。
-- 規則標記的 weak labels。
-- 已知 exploit/path/signature 對應到候選 condition 的弱監督資料。
-- 現有 metadata label 只作輔助分析，不要直接當強標籤。
-
-建議建立 payload-condition pair dataset：
-
-```text
-positive pair:
-  (payload with SQL injection behavior, C_sql_injection)
-
-negative pair:
-  (payload with SQL injection behavior, C_recon)
-  (payload with SQL injection behavior, C_credential_login)
+```powershell
+uv run python -c "import torch; print('torch=', torch.__version__); print('cuda=', torch.cuda.is_available()); print('device=', torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'cpu')"
 ```
 
-模型層面可加入：
+執行完整測試：
 
-- contrastive loss
-- InfoNCE loss
-- triplet loss
-- pairwise ranking loss
-- projection head for payload and condition embeddings
-
-### 用意
-
-一般 embedding model 不保證 payload text 與安全概念描述自然對齊。alignment 的目的，是讓 condition embedding 不只是文字語意錨點，而是和 payload-level evidence 有可學習、可驗證的關係。
-
-沒有 alignment 時：
-
-```text
-gate 有用，只能表示它幫助 reconstruction。
-gate 高，不代表該 condition 語意正確。
+```powershell
+uv run python -m unittest discover `
+  -s experiments\disentangled_cvae_step1\tests -v
 ```
 
-有 alignment 後：
+通過條件：
 
-```text
-gate 高，才比較能解釋成 payload 和該 condition 有語意關係。
+- 所有 tests 都是 `OK`。
+- `test_recovers_known_condition_mixtures` 必須通過。
+- `test_smoke_prepare_train_report` 必須通過。
+
+若 tests 未通過，不要開始正式 embedding 或 training。
+
+---
+
+## 1. 檢查輸入資料與 prepared cache
+
+### 1.1 檢查必要檔案
+
+```powershell
+Get-Item `
+  Year=2022\Step1_rawdata_cleaned.csv, `
+  Year=2022\Step2_golden_review_2_with_Tactic.csv, `
+  experiments\disentangled_cvae_step1\configs\default.yaml
 ```
 
-### 注意事項
+Prepared dataset 必須同時存在以下三個檔案：
 
-- weak labels 可以用，但要在 report 中明確標註來源與可信度。
-- contrastive negatives 要包含 hard negatives，例如 command injection vs SQL injection、path probing vs sensitive file access。
-- 不要只用 random negatives，否則 alignment 任務太簡單，實際解偶仍可能失敗。
-- 如果 embedding model 對 payload token 理解很差，可能需要 domain-specific fine-tuning 或 payload-specific encoder。
-- 如果後續能夠有標註資料，可以參考使用InfoNCE loss 來做instance-level的對齊
-
-### 驗收指標
-
-- 在人工 review 或 held-out weak-label set 上，correct condition similarity 應高於 wrong condition。
-- top-k retrieved conditions 應和人工可理解的 payload behavior 一致。
-- 用真 condition descriptions 應明顯優於 shuffled/random condition descriptions。
-
-## Step 2. 改 Gate 語意：從任意 MLP 輸出改成 Explicit x-C Matching
-
-### 要修正什麼
-
-目前 gate 是由 encoder hidden state 經過 linear layer + sigmoid 產生：
-
-```text
-gates = sigmoid(W hidden)
+```powershell
+$prepared = "outputs\disentangled_cvae_step1\prepared\step1_clean_payload_modernbert"
+Get-Item `
+  "$prepared\x.npy", `
+  "$prepared\metadata.csv", `
+  "$prepared\manifest.json"
 ```
 
-這不保證 gate 是 payload 與 condition 的相似度。後續應考慮讓 gate 明確依賴 `x` 和每個 `C_i` 的 matching。
+目前已知狀態：`metadata.csv` 與 `manifest.json` 存在，但 `x.npy` 曾經缺失。
+只要 `x.npy` 不存在，就不能執行 `--stage train`。
 
-建議方向 1：similarity gate
+### 1.2 建立或補齊 payload embeddings
 
-```text
-z_x = payload_projection(x)
-z_c_i = condition_projection(C_i)
-gate_i = sigmoid(scale * cosine(z_x, z_c_i) + bias_i)
+第一次執行可能下載 ModernBERT weights，且完整 409,699 rows 需要較長時間：
+
+```powershell
+uv run python experiments\disentangled_cvae_step1\run_experiment.py `
+  --config experiments\disentangled_cvae_step1\configs\default.yaml `
+  --stage prepare
 ```
 
-建議方向 2：condition-wise scoring MLP
+若 cache 已損壞或明確需要重建：
 
-```text
-score_i = MLP([z_x, z_c_i, z_x * z_c_i, abs(z_x - z_c_i)])
-gate_i = sigmoid(score_i)
+```powershell
+uv run python experiments\disentangled_cvae_step1\run_experiment.py `
+  --config experiments\disentangled_cvae_step1\configs\default.yaml `
+  --stage prepare `
+  --force-prepare
 ```
 
-建議方向 3：cross-attention gate
+不要在 embedding 正常進行時刪除 prepared directory。
 
-```text
-condition C_i 作為 query
-payload token/features 作為 key/value
-每個 condition 從 payload 中找 evidence
+### 1.3 驗證 cache row alignment
+
+```powershell
+uv run python -c "import json,numpy as np,pandas as pd; p=r'outputs/disentangled_cvae_step1/prepared/step1_clean_payload_modernbert'; x=np.load(p+'/x.npy',mmap_mode='r'); m=pd.read_csv(p+'/metadata.csv',usecols=['sample_id']); manifest=json.load(open(p+'/manifest.json',encoding='utf-8')); print('x=',x.shape,'metadata=',len(m),'manifest_rows=',manifest['rows']); assert len(x)==len(m)==manifest['rows']; assert x.shape[1]==768"
 ```
 
-如果仍使用 single vector payload embedding，similarity gate 是較簡單的第一版。若未來能保留 payload token-level features，cross-attention 會更符合「每個 condition 找自己的 evidence」。
+通過條件：
 
-### 用意
+- `x.shape == (409699, 768)`，或與最新 manifest 宣告完全一致。
+- `len(metadata) == manifest["rows"] == len(x)`。
+- 任一數字不一致時，使用 `--force-prepare` 重建，不要繼續 training。
 
-gate 應該代表：
+---
 
-```text
-這筆 payload 和 condition i 的關係強度
+## 2. 先跑 synthetic concept validation
+
+這一步不是驗證真實 MITRE 分類，而是確認目前程式有能力從「已知 condition
+mixture + shared residual」中恢復 gates。
+
+```powershell
+uv run python -m experiments.disentangled_cvae_step1.concept_validation `
+  --seed 42 `
+  --epochs 80 `
+  --output outputs\disentangled_cvae_step1\concept_validation.json
 ```
 
-而不是：
+檢查結果：
 
-```text
-decoder 為了 reconstruct x 所學到的一組任意權重
+```powershell
+Get-Content outputs\disentangled_cvae_step1\concept_validation.json
 ```
 
-讓 gate 由 x-C matching 產生，可以使 condition 解釋更有根據。
+固定通過門檻：
 
-### 注意事項
+- `passed: true`
+- `macro_f1 >= 0.80`
+- `gate_target_correlation >= 0.75`
+- `condition_reconstruction_gain >= 0.05`
+- `macro_f1` 至少比 `shuffled_target_macro_f1` 高 `0.20`
 
-- gate 使用 sigmoid 時允許 multi-label；適合一筆 payload 同時有多個 behavior。
-- gate 使用 softmax 時會強迫 condition 互斥；除非明確假設每筆 payload 只能對應一個 condition，否則不建議一開始就使用純 softmax。
-- 可以保留 sparse loss，但要避免 sparse weight 太強導致所有 gates 接近 0。
-- 若使用 similarity gate，condition embedding quality 和 projection alignment 會變得非常關鍵。
+若失敗，代表 gate/H 實作或訓練路徑本身有問題，不應開始真實資料調參。
 
-### 驗收指標
+---
 
-- gate top-k 與 x-C similarity ranking 應有一致性。
-- gate 高的 condition 應能在 payload 中找到合理 evidence。
-- gate 不應在所有 sample 上呈現幾乎固定的 pattern；否則代表 gate 主要學到 condition prior，而不是 sample-specific behavior。
+## 3. Golden label 是正式訓練前的硬性檢查
 
-## Step 3. 限制 H，避免 H 偷藏 Condition 資訊
+目前曾觀察到的可用 label 分布：
 
-### 要修正什麼
+| Split | 可用 golden condition labels |
+| --- | ---: |
+| train | 1,142 |
+| validation | 35 |
+| test | 0 |
 
-目前已有 KL、residual constraint、H-only reconstruction 監控，方向正確。後續要更明確定義：
+因此，目前的 time-split test set **不能驗證 Tactic classification**。即使 UMAP
+很好看、reconstruction 很低或 gates 有變化，也不能宣稱解耦成功。
 
-```text
-H 只保留 condition 無法解釋的殘差。
-gated C pathway 負責 condition-related behavior。
+正式判讀 real-data baseline 前，至少要完成其中一種方案：
+
+- 推薦：補標 chronological test 時段的 payload，讓 test 中每個目標 Tactic
+  有足夠樣本。
+- 暫時方案：另外建立 stratified golden holdout，而且 holdout labels 絕不可
+  參與 training；報告必須註明它不是 time-generalization test。
+- 樣本極少或完全沒有 label 的 Tactic，第一輪先排除或列為 unsupported，不能
+  把 zero-support class 一起平均後宣稱 macro 指標有效。
+
+每次完成 training 後檢查：
+
+```powershell
+$run = Get-ChildItem outputs\disentangled_cvae_step1 -Directory |
+  Where-Object Name -ne "prepared" |
+  Sort-Object LastWriteTime -Descending |
+  Select-Object -First 1
+
+Get-Content "$($run.FullName)\metrics\behavior_supervision_by_split.json"
 ```
 
-可加強的方向：
+正式 semantic test 的硬性門檻：
 
-- 降低 `residual_dim`，測試不同大小對 condition usage 的影響。
-- 增強 residual constraint，使 `H-only` 不應接近 full reconstruction。
-- 加入 adversarial/probe 檢查，避免從 `H` 輕易預測 condition。
-- 監控 `full reconstruction`、`H-only reconstruction`、`C-only reconstruction` 的差距。
-- 對 `H` 加更強 bottleneck 或 noise，使它不容易成為完整記憶通道。
+- `semantic_test_is_valid` 必須是 `true`。
+- `test.usable_condition_labels` 必須大於 `0`。
+- 需要檢查 `counts_by_label`，不能只看總數。
 
-建議要追的核心數字：
+若為 `false`，該次 run 只能檢查工程流程與 reconstruction，不能判斷分類效果。
 
-```text
-full_mse
-h_only_mse
-c_only_mse
-h_only_mse - full_mse
-condition ablation delta
-gate sparsity
-condition predictability from H
+---
+
+## 4. 啟動最小 Baseline
+
+目前 [default.yaml](experiments/disentangled_cvae_step1/configs/default.yaml) 使用：
+
+```yaml
+loss_profile: feasibility_baseline_v1
+weights:
+  reconstruction: 1.0
+  kl: 1.0
+  decorrelation: 0.0
+  sparse: 0.0
+  gate_entropy: 0.0
+  utility: 0.0
+  residual_constraint: 0.1
+  behavior_infonce: 1.0
+  residual_adversary: 0.0
 ```
 
-### 用意
+Baseline 只回答：
 
-如果 `H-only` 幾乎和 full reconstruction 一樣好，代表模型主要靠 H，condition pathway 可能只是裝飾。
+1. Payload behavior projector 能否對準 golden Tactic？
+2. Condition pathway 是否改善 reconstruction？
+3. `H` 是否成為合理 residual，而不是包含全部資訊？
 
-理想狀態：
+### 4.1 只執行 training（推薦）
 
-```text
-full reconstruction 最好
-H-only 明顯變差
-C-only 能重建 condition-related 部分，但無法完整重建
-高 gate condition 被 ablate 後 reconstruction 明顯變差
-H 不容易預測 condition
+確認 `x.npy` 完整後：
+
+```powershell
+uv run python experiments\disentangled_cvae_step1\run_experiment.py `
+  --config experiments\disentangled_cvae_step1\configs\default.yaml `
+  --stage train
 ```
 
-### 注意事項
+### 4.2 從 prepare 到 train 一次執行
 
-- 不能把 H 壓太小到 reconstruction 完全崩潰，否則 gate 可能被迫亂開。
-- residual constraint 太強可能導致模型犧牲 reconstruction，得到看似 sparse 但不可靠的 gates。
-- 要用多個 seed 檢查穩定性，否則可能只是某次初始化造成的分解。
-- condition 解偶是 identifiability 問題，只靠 reconstruction 仍不足以保證語意正確。
-
-### 驗收指標
-
-- `full_mse` 明顯低於 `h_only_mse`。
-- 高 gate condition 的 ablation delta 明顯高於低 gate condition。
-- 從 `H` 訓練簡單 probe 預測 condition 時，效果不應太好；若很好，代表 H 偷藏 condition。
-- 同一 payload 在不同 seed 下的 top gate 應大致穩定。
-
-## Step 4. 加入可驗證的 Condition Supervision
-
-### 要修正什麼
-
-完全無監督 reconstruction 很難保證 gate 對應到人類定義的 condition。後續應加入最低限度的 supervision，即使是少量人工或 weak supervision。
-
-可加入的 supervision：
-
-- gate-label BCE loss：multi-label condition target。
-- gate ranking loss：positive condition gate > negative condition gate。
-- contrastive payload-condition loss：正確 pair 拉近，錯誤 pair 推遠。
-- top-k consistency loss：要求人工或 weak label 中的 condition 排在前面。
-- calibration/evaluation only labels：若不想直接訓練，也至少用作驗證。
-
-建議資料策略：
-
-1. 先建立小型人工 golden review set。
-2. 每筆 payload 標註 0 到多個目前 condition set 中的 conditions。
-3. 記錄 evidence span 或 evidence note。
-4. 將 golden set 分成 alignment train/dev/test，避免只在同一批資料上調參。
-5. weak labels 可大量補充，但要和 human labels 分開報告。
-
-### 用意
-
-supervision 的目的不是把模型變成純分類器，而是給 gate 一個語意方向：
-
-```text
-reconstruction loss 確保 representation 有資訊。
-condition supervision 確保 gate 對應人類定義的 condition。
-contrastive alignment 確保 payload 和 condition embedding 在同一空間可比。
+```powershell
+uv run python experiments\disentangled_cvae_step1\run_experiment.py `
+  --config experiments\disentangled_cvae_step1\configs\default.yaml `
+  --stage all
 ```
 
-這樣 gate 才能更接近「condition 解偶」而不是「任意 latent decomposition」。
+若 prepared fingerprint 相同，`--stage all` 應重用 cache；不要加
+`--force-prepare`，除非確定要重新 embedding。
 
-### 注意事項
+### 4.3 即時觀察 training
 
-- 不要只看 classification accuracy，否則會偏離 disentanglement 目標。
-- supervision loss 權重要小心調，太強會讓模型只學 label shortcut，太弱則 gate 仍可能沒有語意。
-- 如果使用 weak labels，要防止模型重現 weak label 的錯誤偏見。
-- 如果 condition 是 multi-label，不要用單一 softmax CE 當唯一 supervision。
-- golden review 的 condition 定義要和目前使用的 condition set 保持一致。
+另開 PowerShell：
 
-### 驗收指標
+```powershell
+$run = Get-ChildItem outputs\disentangled_cvae_step1 -Directory |
+  Where-Object Name -ne "prepared" |
+  Sort-Object LastWriteTime -Descending |
+  Select-Object -First 1
 
-- gate top-1/top-k 在 golden review set 上與人工 condition 有一致性。
-- positive condition 的 gate 平均高於 hard negative condition。
-- 加入 supervision 後，ablation utility 不應消失；否則 gate 可能只是分類頭，不是真的進 reconstruction。
-- 真 condition set 應優於 shuffled labels 或 random condition embeddings。
-
-## 建議優先順序
-
-1. 建立小型 golden review set，至少能驗證 gate 是否語意正確。
-2. 加入 payload-condition alignment，先從 contrastive/ranking objective 開始。
-3. 將 gate 改成 explicit x-C matching，而不是只由 encoder MLP 自由產生。
-4. 加強 H 的限制與監控，確認 condition pathway 真的承擔可解釋資訊。
-
-## 最重要的判斷標準
-
-後續不要只問：
-
-```text
-reconstruction 有沒有變好？
+$run.FullName
+Get-Content "$($run.FullName)\logs\experiment.log" -Wait
 ```
 
-還要問：
+每個 epoch 主要觀察：
 
-```text
-gate 高的 condition 是否有 payload evidence？
-拿掉 gate 高的 condition 是否真的傷害 reconstruction？
-H-only 是否明顯比 full 差？
-真 condition 是否比 random/shuffled condition 好？
-不同 seed 的 gate 是否穩定？
-人工 review 是否認同 top gate？
+- `train_loss`、`val_loss`：應為 finite，不能出現 `nan`/`inf`。
+- `train_recon_mse`、`val_recon_mse`：應下降後趨於穩定。
+- `val_h_only_mse`：理想上高於 `val_recon_mse`。
+- `val_c_only_mse`：通常可高於 full MSE，但不能完全沒有資訊。
+- `val_behavior_acc`：只能在 validation 有 golden labels 時解讀。
+- `val_behavior_labeled_count`：太少時 accuracy 波動不可信。
+- Early stopping 應保留最低 `val_loss` checkpoint。
+
+---
+
+## 5. Baseline 結果檢查
+
+先取得最新 run：
+
+```powershell
+$run = Get-ChildItem outputs\disentangled_cvae_step1 -Directory |
+  Where-Object Name -ne "prepared" |
+  Sort-Object LastWriteTime -Descending |
+  Select-Object -First 1
 ```
 
-只有這些條件逐步成立，才能比較有把握說目前模型真的在做 Condition 解偶。
+### 5.1 確認 run 完整
+
+```powershell
+Get-Item `
+  "$($run.FullName)\checkpoints\disentangled_cvae.pt", `
+  "$($run.FullName)\metrics\training_history.csv", `
+  "$($run.FullName)\metrics\training_summary.json", `
+  "$($run.FullName)\metrics\loss_summary.json", `
+  "$($run.FullName)\metrics\behavior_alignment_metrics.json", `
+  "$($run.FullName)\reports\report.md"
+```
+
+任一關鍵檔案缺失，都代表 run 未完成。
+
+### 5.2 檢查 reconstruction 與 condition contribution
+
+```powershell
+Get-Content "$($run.FullName)\metrics\loss_summary.json"
+Get-Content "$($run.FullName)\metrics\condition_ablation_delta_mse_summary.csv"
+```
+
+必要關係：
+
+```text
+h_only_mse > recon_mse
+condition_reconstruction_gain = h_only_mse - recon_mse > 0
+```
+
+解讀方式：
+
+- `h_only_mse` 幾乎等於 `recon_mse`：decoder 幾乎只依賴 `H`，condition
+  pathway 沒有實質貢獻。
+- 多數 condition 的 `mean_delta_mse <= 0`：移除 condition 不會傷害結果，gate
+  可能只是裝飾。
+- `c_only_mse` 很低而 full 沒改善：可能 `H` 沒有學到 shared residual。
+- Reconstruction 改善只能證明 condition 有 utility，不能證明 Tactic 名稱正確。
+
+### 5.3 檢查 Tactic alignment
+
+```powershell
+Get-Content "$($run.FullName)\metrics\behavior_supervision_by_split.json"
+Get-Content "$($run.FullName)\metrics\behavior_alignment_metrics.json"
+```
+
+只有 `semantic_test_is_valid: true` 才可解讀：
+
+- `accuracy`
+- `macro_f1`
+- `weighted_f1`
+- 每一類 precision / recall / F1
+- `non_ambiguous_rate`
+
+不能只看 accuracy。至少要與以下 baseline 比較：
+
+- 預測最多數 Tactic 的 majority baseline。
+- 使用相同 payload embeddings 的 plain classifier baseline。
+- shuffled golden labels baseline。
+
+預期條件：模型 macro-F1/AUPRC 應明顯優於上述 baseline，而且不是只靠
+Discovery/Credential Access 等多數類別。
+
+### 5.4 檢查 gates
+
+```powershell
+Import-Csv "$($run.FullName)\metrics\condition_gate_summary.csv" |
+  Format-Table condition,mean_gate,std_gate,p50_gate,p90_gate,active_rate
+
+Import-Csv "$($run.FullName)\metrics\testset_condition_predictions.csv" |
+  Select-Object -First 20 sample_id,gold_tactic,predicted_condition,active_condition_count
+```
+
+異常模式：
+
+- 所有 `mean_gate` 接近 `0`：gate collapse / sparsity 過強 / alignment 無效。
+- 所有 `mean_gate` 接近 `1`：gate 沒有選擇性。
+- `std_gate` 幾乎是 `0`：gate 只學到 condition prior，不是 sample-specific。
+- 每筆 `active_condition_count` 都相同：需要檢查 threshold 或 gate collapse。
+- Rare tactics 永遠不啟動：先檢查 golden support，不要直接增加 loss weight。
+
+### 5.5 檢查 condition geometry
+
+```powershell
+Get-Content "$($run.FullName)\metrics\condition_raw_cosine_similarity.csv" -TotalCount 5
+Get-Content "$($run.FullName)\metrics\condition_cosine_similarity.csv" -TotalCount 5
+```
+
+並查看：
+
+- `plots/condition_raw_cosine_similarity.png`
+- `plots/condition_cosine_similarity.png`
+
+轉換後 conditions 不應全部高度相似；但低 cosine 只表示 geometry 被展開，
+不等於 payload 已成功分類。
+
+### 5.6 UMAP/PCA 只能作輔助
+
+查看：
+
+- `plots/umap_original_space.png`
+- `plots/umap_h_space.png`
+- `plots/umap_gated_c_space.png`
+
+UMAP 不可作為主要成功判準。顏色分群可能來自模型自己的預測，不能取代
+golden-label metrics、ablation 或 leakage probe。
+
+---
+
+## 6. Baseline 的 Go / No-Go 判定
+
+只有同時符合以下條件，才進入完整模型：
+
+- [ ] Synthetic concept validation 通過。
+- [ ] Prepared `x.npy`、metadata、manifest rows 完全一致。
+- [ ] Real semantic test 有足夠且跨 Tactic 的 golden labels。
+- [ ] Baseline macro-F1/AUPRC 優於 majority、plain classifier、shuffle baseline。
+- [ ] `h_only_mse - recon_mse > 0`，且差異不是數值雜訊。
+- [ ] Active condition ablation 大多造成正的 reconstruction delta。
+- [ ] Gates 有 sample-specific variation，沒有全 0、全 1 或 constant collapse。
+- [ ] 多個 seeds 得到方向一致的結果。
+
+建議至少跑三個 seeds：`42`、`43`、`44`。每個 seed 使用獨立 config，保持
+資料 split、模型與 loss 不變，只修改 `seed` 與 `evaluation.random_state`。
+
+若 semantic test 仍為 0 labels，判定必須是 **No-Go：缺少驗證資料**，不是模型
+成功或失敗。
+
+---
+
+## 7. 建立完整模型設定 `full_v1`
+
+不要直接覆寫 baseline config，先複製：
+
+```powershell
+Copy-Item `
+  experiments\disentangled_cvae_step1\configs\default.yaml `
+  experiments\disentangled_cvae_step1\configs\full_v1.yaml
+```
+
+在 `full_v1.yaml` 修改：
+
+```yaml
+model:
+  loss_profile: "full_v1"
+  utility_margin: 0.1
+  residual_margin: 0.1
+  weights:
+    reconstruction: 1.0
+    kl: 1.0
+    decorrelation: 0.0
+    sparse: 0.01
+    gate_entropy: 0.01
+    utility: 0.1
+    residual_constraint: 0.1
+    behavior_infonce: 1.0
+    residual_adversary: 0.1
+```
+
+說明：
+
+- `decorrelation` 暫時維持 `0`。目前實作會懲罰 condition co-activation，可能
+  錯殺合理的 multi-tactic payload。
+- `sparse` 從 `0.01` 開始，不要直接回到先前的 `1.0`。
+- `utility` 與 adversary 先使用 `0.1`，避免一次壓過主 loss。
+- 每新增一個 loss，理想上都應先做單獨 ablation；`full_v1` 是 baseline 通過後
+  的第一個組合實驗，不是最終最佳參數。
+
+---
+
+## 8. 完整模型訓練指令
+
+只重用 prepared embeddings 進行 training：
+
+```powershell
+uv run python experiments\disentangled_cvae_step1\run_experiment.py `
+  --config experiments\disentangled_cvae_step1\configs\full_v1.yaml `
+  --stage train
+```
+
+從資料準備到訓練完整執行：
+
+```powershell
+uv run python experiments\disentangled_cvae_step1\run_experiment.py `
+  --config experiments\disentangled_cvae_step1\configs\full_v1.yaml `
+  --stage all
+```
+
+訓練過程使用與 baseline 相同的 log 觀察方式。不要同時改 split、embedding、
+hidden dimensions、loss weights 與 seed，否則無法知道改善來自哪裡。
+
+---
+
+## 9. Baseline 與 Full 結果比較
+
+比較時固定：
+
+- 同一份 `x.npy`
+- 同一 condition embeddings 與 geometry
+- 同一 train/val/test split
+- 同一 seed
+- 同一 golden labels
+- 同一 evaluation threshold
+
+建立比較表：
+
+| Metric | Baseline | Full v1 | 判讀方向 |
+| --- | ---: | ---: | --- |
+| test macro-F1 / macro-AUPRC |  |  | 越高越好 |
+| weighted-F1 |  |  | 輔助，不能取代 macro |
+| non-ambiguous rate |  |  | 避免全部 ambiguous |
+| full reconstruction MSE |  |  | 越低越好 |
+| H-only MSE |  |  | 應高於 full |
+| H-only minus full MSE |  |  | 正值且合理增大 |
+| C-only MSE |  |  | 檢查 condition utility |
+| mean active condition count |  |  | 不應 collapse |
+| gate std / active rate |  |  | 應具 sample variation |
+| post-hoc H leakage probe |  |  | 越接近 declared baseline 越好 |
+| seed mean ± std |  |  | 越穩定越好 |
+
+Full v1 只有在以下情況才算改善：
+
+- Semantic metric 沒有下降，最好有穩定提升。
+- H leakage 降低。
+- Condition ablation/condition-use gain 提升。
+- Gates 更稀疏或清楚，但沒有犧牲 rare-class recall。
+- 改善在多個 seeds 都出現，而不是單次最佳結果。
+
+若 reconstruction 變好但 semantic metric 下降，不算 disentanglement 改善。
+若 gates 更 sparse 但全數變成 0，也不算改善。
+
+---
+
+## 10. 每次正式實驗要保存的資料
+
+- [ ] 使用的 YAML config。
+- [ ] Git commit 或 `git diff` 狀態。
+- [ ] `environment.json`。
+- [ ] `training_history.csv` 與 checkpoint。
+- [ ] `behavior_supervision_by_split.json`。
+- [ ] `behavior_alignment_metrics.json`。
+- [ ] `loss_summary.json`。
+- [ ] Gate summary 與 test predictions。
+- [ ] Condition ablation summary。
+- [ ] Condition geometry matrices/plots。
+- [ ] 三個以上 seeds 的 mean ± std。
+- [ ] Baseline 與 full_v1 的比較表。
+- [ ] 清楚記錄 unsupported/zero-support Tactics。
+
+最終報告必須分開陳述：
+
+1. Classification/alignment 是否正確。
+2. Condition 是否真的被 decoder 使用。
+3. `H` 是否仍洩漏 Tactic。
+4. Gate 是否穩定、可校準、可跨 seed 重現。
+5. 哪些結論只是 synthetic capability，哪些來自 held-out real payload。

@@ -9,6 +9,9 @@ import pandas as pd
 import torch
 
 from experiments.disentangled_cvae_step1.data import (
+    BehaviorSupervision,
+    SplitIndices,
+    behavior_supervision_split_summary,
     expected_manifest,
     load_behavior_supervision,
     manifest_matches,
@@ -88,6 +91,25 @@ class PrepareCacheTests(unittest.TestCase):
 
 
 class BehaviorSupervisionTests(unittest.TestCase):
+    def test_split_summary_detects_unlabeled_test(self) -> None:
+        supervision = BehaviorSupervision(
+            targets=np.asarray([0, 1, -1, -1]),
+            row_labels=np.asarray(["A", "B", "", ""], dtype=object),
+            summary={"enabled": True},
+        )
+        summary = behavior_supervision_split_summary(
+            supervision,
+            SplitIndices(
+                train=np.asarray([0, 1]),
+                val=np.asarray([2]),
+                test=np.asarray([3]),
+            ),
+        )
+        self.assertFalse(summary["semantic_test_is_valid"])
+        self.assertEqual(summary["splits"]["train"]["usable_condition_labels"], 2)
+        self.assertEqual(summary["splits"]["test"]["usable_condition_labels"], 0)
+        self.assertIn("cannot validate", summary["warning"])
+
     def test_load_behavior_supervision_maps_tactic_only(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)

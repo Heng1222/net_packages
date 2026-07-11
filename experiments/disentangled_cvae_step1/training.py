@@ -334,7 +334,7 @@ def extract_batches(
         if behavior_target_array is not None:
             target_batch = torch.from_numpy(behavior_target_array[index_batch.numpy()]).to(device)
         output = model(x_batch, conditions, sample=False)
-        losses = model.loss(output, x_batch, target_batch)
+        losses = model.loss(output, x_batch, target_batch, compute_diagnostics=True)
         aux = model.auxiliary_reconstructions(output)
         h = output["h_mu"]
         c_summary = model.semantic_summary(output["conditions"], output["gates"])

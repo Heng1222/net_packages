@@ -18,6 +18,7 @@ else:
 
 from experiments.disentangled_cvae_step1.conditions import load_condition_embeddings  # noqa: E402
 from experiments.disentangled_cvae_step1.data import (  # noqa: E402
+    behavior_supervision_split_summary,
     leakage_report,
     load_behavior_supervision,
     load_prepared,
@@ -156,6 +157,11 @@ def run_train(config: dict, run_dir: Path, device: torch.device, logger: logging
         config.get("_meta", {}).get("project_root", PROJECT_ROOT),
     )
     write_json(supervision.summary, run_dir / "metrics" / "behavior_supervision_summary.json")
+    supervision_by_split = behavior_supervision_split_summary(supervision, split)
+    write_json(
+        supervision_by_split,
+        run_dir / "metrics" / "behavior_supervision_by_split.json",
+    )
     if supervision.summary.get("enabled"):
         logger.info(
             "Behavior supervision: usable_labeled_rows=%d matched_rows=%d source=%s",
@@ -163,6 +169,16 @@ def run_train(config: dict, run_dir: Path, device: torch.device, logger: logging
             int(supervision.summary.get("matched_rows", 0)),
             supervision.summary.get("path"),
         )
+        for split_name, split_summary in supervision_by_split["splits"].items():
+            logger.info(
+                "Behavior supervision split=%s matched=%d usable=%d rows=%d",
+                split_name,
+                int(split_summary["matched_golden_rows"]),
+                int(split_summary["usable_condition_labels"]),
+                int(split_summary["rows"]),
+            )
+        if not supervision_by_split["semantic_test_is_valid"]:
+            logger.warning(supervision_by_split["warning"])
     else:
         logger.info("Behavior supervision disabled.")
 

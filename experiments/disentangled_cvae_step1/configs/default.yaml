@@ -71,6 +71,8 @@ preprocessing:
   batch_size: 20000
 
 model:
+  # First establish semantic alignment and condition usage before adding regularizers.
+  loss_profile: "feasibility_baseline_v1"
   input_dim: 768
   residual_dim: 64
   condition_dim: 768
@@ -84,18 +86,18 @@ model:
   temperature: 0.1
   behavior_temperature: 0.1
   residual_adversary_strength: 1.0
-  utility_margin: 0.5
-  residual_margin: 0.5
+  utility_margin: 0.1
+  residual_margin: 0.1
   weights:
     reconstruction: 1.0
     kl: 1.0
-    decorrelation: 0.1
-    sparse: 1.0
-    gate_entropy: 0.01
-    utility: 0.5
-    residual_constraint: 0.5
+    decorrelation: 0.0
+    sparse: 0.0
+    gate_entropy: 0.0
+    utility: 0.0
+    residual_constraint: 0.1
     behavior_infonce: 1.0
-    residual_adversary: 0.1
+    residual_adversary: 0.0
 
 training:
   batch_size: 128

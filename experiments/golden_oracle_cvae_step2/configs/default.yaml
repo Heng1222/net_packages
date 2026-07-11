@@ -1,0 +1,80 @@
+seed: 42
+
+data:
+  input_path: "Year=2022/Step2_golden_review_2_with_Tactic.csv"
+  prepared_dir: "outputs/golden_oracle_cvae_step2/prepared/golden_modernbert"
+  sample_id_col: "Session_ID"
+  payload_text_col: "clean_payload_list"
+  label_col: "Tactic"
+  normal_label: "Normal (TA9000)"
+  min_class_count: 20
+  conflicting_payload_policy: "exclude"
+  deduplicate_payloads: true
+  split:
+    strategy: "stratified_group"
+    train_ratio: 0.6
+    val_ratio: 0.2
+    test_ratio: 0.2
+  embedder:
+    backend: "sentence_transformers"
+    model_name: "nomic-ai/modernbert-embed-base"
+    model_revision: "d556a88e332558790b210f7bdbe87da2fa94a8d8"
+    max_length: 8192
+    overflow_strategy: "chunk_mean"
+    batch_size: 4
+    normalize: true
+
+conditions:
+  path: "experiments/disentangled_cvae_step1/conditions/mitre_attack_v11_3_step1.yaml"
+  format: "yaml"
+  label_field: "label"
+  id_field: "tactic_id"
+  text_fields: ["keywords", "techniques"]
+  embedder_backend: "sentence_transformers"
+  embedder_model_name: "nomic-ai/modernbert-embed-base"
+  embedder_model_revision: "d556a88e332558790b210f7bdbe87da2fa94a8d8"
+  batch_size: 4
+  normalize: true
+  geometry:
+    method: "common_component_removal"
+    center: true
+    remove_top_components: 0
+    normalize: true
+    strength: 1.0
+  exclude_labels: ["Normal (TA9000)"]
+
+preprocessing:
+  normalization: "standard"
+
+model:
+  input_dim: 768
+  condition_dim: 768
+  residual_dim: 32
+  encoder_hidden_dims: [512, 256]
+  decoder_hidden_dims: [512, 256]
+  projector_hidden_dims: [256]
+  classifier_hidden_dims: [256]
+  dropout: 0.2
+  activation: "gelu"
+  temperature: 0.15
+
+loss:
+  reconstruction: 1.0
+  kl: 0.01
+  gate_supervision: 1.0
+  condition_use: 0.1
+  condition_use_margin: 0.05
+
+training:
+  batch_size: 64
+  max_epochs: 100
+  learning_rate: 0.0003
+  weight_decay: 0.0001
+  early_stopping_patience: 15
+  device: "auto"
+
+evaluation:
+  condition_threshold: 0.5
+
+output:
+  base_dir: "outputs/golden_oracle_cvae_step2"

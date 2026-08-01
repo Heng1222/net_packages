@@ -1,0 +1,74 @@
+seed: 42
+
+data:
+  input_path: "Year=2022/Step1_rawdata_cleaned.csv"
+  prepared_dir: "outputs/center_augmented_cvae_step1/prepared/step1_clean_payload_modernbert"
+  sample_id_col: "Session_ID"
+  payload_text_col: "clean_payload_list"
+  label_col: "Sess_Tactic_predict"
+  time_col: "Datetime"
+  payload_parser: "auto"
+  read_chunksize: 5000
+  max_rows: null
+  split:
+    strategy: "time"
+    train_ratio: 0.7
+    val_ratio: 0.15
+    test_ratio: 0.15
+  embedder:
+    backend: "sentence_transformers"
+    model_name: "nomic-ai/modernbert-embed-base"
+    model_revision: "d556a88e332558790b210f7bdbe87da2fa94a8d8"
+    max_length: 8192
+    overflow_strategy: "chunk_mean"
+    batch_size: 4
+    normalize: true
+
+conditions:
+  path: "experiments/center_augmented_cvae_step1/conditions/mitre_attack_v11_3_step1.yaml"
+  cache_dir: "outputs/center_augmented_cvae_step1/prepared/conditions"
+  text_fields: ["keywords", "techniques"]
+  common_label: "Common Tactic Component"
+  embedder:
+    backend: "sentence_transformers"
+    model_name: "nomic-ai/modernbert-embed-base"
+    model_revision: "d556a88e332558790b210f7bdbe87da2fa94a8d8"
+    batch_size: 4
+    normalize: true
+
+model:
+  input_dim: 768
+  residual_dim: 64
+  encoder_hidden_dims: [1024, 512]
+  residual_decoder_hidden_dims: [512, 1024]
+  dropout: 0.1
+  batch_norm: false
+  activation: "relu"
+  gate_temperature: 0.1
+
+loss:
+  reconstruction: 1.0
+  kl: 0.01
+
+training:
+  batch_size: 128
+  max_epochs: 200
+  learning_rate: 0.0005
+  weight_decay: 0.001
+  early_stopping_patience: 15
+  num_workers: 0
+  device: "auto"
+
+baselines:
+  train_plain_vae: true
+  train_random_condition_cvae: true
+
+evaluation:
+  condition_threshold: 0.5
+  golden_path: "Year=2022/Step2_golden_review_2_with_Tactic.csv"
+  golden_sample_id_col: "Session_ID"
+  golden_label_col: "Tactic"
+
+output:
+  base_dir: "outputs/center_augmented_cvae_step1"
+

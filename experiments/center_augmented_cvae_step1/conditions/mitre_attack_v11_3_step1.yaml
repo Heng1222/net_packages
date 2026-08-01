@@ -1,0 +1,71 @@
+metadata:
+  framework: MITRE Enterprise ATT&CK
+  version: "11.3"
+  note: Local independent copy containing the same 13 Step1 tactic categories.
+tactics:
+  Initial Access (TA0001):
+    label: Initial Access (TA0001)
+    tactic_id: TA0001
+    keywords: [initial foothold, spearphishing, public-facing application, valid accounts, remote services]
+    techniques: [Drive-by Compromise, Exploit Public-Facing Application, External Remote Services, Phishing, Supply Chain Compromise, Valid Accounts]
+  Execution (TA0002):
+    label: Execution (TA0002)
+    tactic_id: TA0002
+    keywords: [command, script, malicious code, code execution, remote execution]
+    techniques: [Command and Scripting Interpreter, Exploitation for Client Execution, Native API, Scheduled Task/Job, System Services, User Execution]
+  Persistence (TA0003):
+    label: Persistence (TA0003)
+    tactic_id: TA0003
+    keywords: [maintain access, startup, account, configuration change, foothold]
+    techniques: [Account Manipulation, Boot or Logon Autostart Execution, Create Account, Event Triggered Execution, Scheduled Task/Job, Valid Accounts]
+  Privilege Escalation (TA0004):
+    label: Privilege Escalation (TA0004)
+    tactic_id: TA0004
+    keywords: [privilege escalation, administrator, root, elevated access, permissions]
+    techniques: [Abuse Elevation Control Mechanism, Access Token Manipulation, Exploitation for Privilege Escalation, Process Injection, Scheduled Task/Job, Valid Accounts]
+  Defense Evasion (TA0005):
+    label: Defense Evasion (TA0005)
+    tactic_id: TA0005
+    keywords: [avoid detection, disable security, obfuscation, masquerading, trusted process]
+    techniques: [Impair Defenses, Indicator Removal on Host, Masquerading, Obfuscated Files or Information, Process Injection, Virtualization/Sandbox Evasion]
+  Credential Access (TA0006):
+    label: Credential Access (TA0006)
+    tactic_id: TA0006
+    keywords: [credentials, password, account name, keylogging, credential dumping]
+    techniques: [Brute Force, Credentials from Password Stores, Input Capture, Network Sniffing, OS Credential Dumping, Unsecured Credentials]
+  Discovery (TA0007):
+    label: Discovery (TA0007)
+    tactic_id: TA0007
+    keywords: [system information, network discovery, environment, enumeration, internal network]
+    techniques: [Account Discovery, File and Directory Discovery, Network Service Discovery, Process Discovery, System Information Discovery, System Network Configuration Discovery]
+  Lateral Movement (TA0008):
+    label: Lateral Movement (TA0008)
+    tactic_id: TA0008
+    keywords: [lateral movement, remote system, internal movement, remote service, pivot]
+    techniques: [Exploitation of Remote Services, Internal Spearphishing, Lateral Tool Transfer, Remote Services, Software Deployment Tools]
+  Collection (TA0009):
+    label: Collection (TA0009)
+    tactic_id: TA0009
+    keywords: [collect data, screenshots, keyboard input, email, browser data]
+    techniques: [Archive Collected Data, Automated Collection, Clipboard Data, Data from Local System, Email Collection, Input Capture, Screen Capture]
+  Exfiltration (TA0010):
+    label: Exfiltration (TA0010)
+    tactic_id: TA0010
+    keywords: [exfiltration, steal data, transfer data, compress, encrypt]
+    techniques: [Automated Exfiltration, Exfiltration Over C2 Channel, Exfiltration Over Web Service, Scheduled Transfer, Transfer Data to Cloud Account]
+  Command and Control (TA0011):
+    label: Command and Control (TA0011)
+    tactic_id: TA0011
+    keywords: [command and control, C2, compromised system, communication channel, network traffic]
+    techniques: [Application Layer Protocol, Data Encoding, Dynamic Resolution, Encrypted Channel, Proxy, Remote Access Software, Web Service]
+  Resource Development (TA0042):
+    label: Resource Development (TA0042)
+    tactic_id: TA0042
+    keywords: [resource development, infrastructure, accounts, capabilities, operations]
+    techniques: [Acquire Infrastructure, Compromise Accounts, Develop Capabilities, Establish Accounts, Obtain Capabilities, Stage Capabilities]
+  Reconnaissance (TA0043):
+    label: Reconnaissance (TA0043)
+    tactic_id: TA0043
+    keywords: [reconnaissance, targeting, infrastructure, organization, information gathering]
+    techniques: [Active Scanning, Gather Victim Host Information, Gather Victim Identity Information, Gather Victim Network Information, Search Open Websites/Domains]
+

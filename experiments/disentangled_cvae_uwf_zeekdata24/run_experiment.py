@@ -107,7 +107,10 @@ def _malicious_representations(
 ) -> tuple[dict[str, tuple[np.ndarray, np.ndarray, np.ndarray]], tuple[np.ndarray, np.ndarray, np.ndarray]]:
     split_indices = (split.train, split.val, split.test)
     names = ("train", "val", "test")
-    masks = tuple(metadata.iloc[indices]["technique"].to_numpy() != "Benign" for indices in split_indices)
+    masks = tuple(
+        metadata.iloc[indices]["probe_eligible"].astype(str).str.casefold().eq("true").to_numpy()
+        for indices in split_indices
+    )
     labels = tuple(metadata.iloc[indices]["technique"].to_numpy(dtype=str)[mask] for indices, mask in zip(split_indices, masks, strict=True))
     representations: dict[str, tuple[np.ndarray, np.ndarray, np.ndarray]] = {}
     for representation in ("h", "c", "hc"):
@@ -288,6 +291,8 @@ def write_report(
         f"- Rows: {len(metadata)}; train/val/test: {len(split.train)}/{len(split.val)}/{len(split.test)}.",
         "- Official Duplicate sentinel label copies ignored in favor of canonical rows: "
         f"{int(metadata['duplicate_sentinel_rows'].sum())}.",
+        "- Multi-technique flows retained for tactic training but excluded from single-label probes: "
+        f"{int(metadata['technique'].str.contains('|', regex=False).sum())}.",
         "- T1078 maps to four inseparable co-occurring tactic labels in this dataset.", "",
         "## Tactic gates", "",
         f"- Test micro/macro F1: {tactic_metrics['micro_f1']:.6f} / {tactic_metrics['macro_f1']:.6f}",

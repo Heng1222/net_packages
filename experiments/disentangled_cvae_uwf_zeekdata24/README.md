@@ -10,8 +10,9 @@
 - decoder、gates、ablation 都使用 14 個 conditionals；只有前 13 個 tactic logits 使用 multi-label `BCEWithLogitsLoss`，共同 conditional 不接受 tactic label supervision。
 - residual adversary 同樣預測 13 維 multi-hot tactic，`pos_weight` 只用 training split 計算。
 - T1078 同時合併為 Initial Access、Defense Evasion、Persistence、Privilege Escalation。這四個標籤在此資料集不可分，只能解讀為群組 alignment。
-- 官方 CSV 以 `label_technique=Duplicate` / `label_binary=Duplicate` 標記跨 tactic 目錄的重複 flow。adapter 會丟棄 sentinel 複本的 labels，以同 UID canonical row 決定 technique/tactic；只有 canonical technique 為 T1078 時才展開上述四個 tactic targets。孤立 sentinel 會被視為資料不完整，不會猜測成任一 technique 或 Benign。
+- 官方 CSV 以 `label_technique=Duplicate` / `label_binary=Duplicate` 標記跨 tactic 目錄的重複 flow。adapter 會丟棄 sentinel 複本的 labels，以同 UID canonical row 決定 technique/tactic；只有 canonical technique 為 T1078 時才展開上述四個 tactic targets。沒有 canonical row 的孤立 sentinel 無法可靠標註，因此會排除，數量記錄在 prepared `manifest.json`，不會猜測成任一 technique 或 Benign。
 - technique probes 只使用 malicious flows，比較 `X`、前 13 個 `gates`、`C_summary`、`H` 與 `HC`。五類為 T1048、T1078、T1110、T1190、T1595。
+- 同時具有多個 canonical techniques 的 flow 仍保留於 multi-label tactic CVAE 訓練，但因沒有唯一的五類 ground truth，會標記 `probe_eligible=False` 並排除於 single-label technique probes；數量保存在 prepared manifest。
 
 flow text 只序列化 protocol、service、ports、connection state、history、local flags，以及 log2-bucketed duration/bytes/packet counts。UID、community ID、IP、時間與所有 label 欄位都不會進入文字 embedding。
 

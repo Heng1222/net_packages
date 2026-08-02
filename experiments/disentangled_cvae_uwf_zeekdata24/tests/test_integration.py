@@ -55,6 +55,15 @@ def synthetic_category_rows() -> dict[str, list[dict[str, str]]]:
         ):
             technique = "T1078" if category == "Defense_Evasion" else "Duplicate"
             rows[category].append(uwf_row(f"t1078-{index}", tactic, technique, index))
+    rows["Initial_Access"].append(
+        uwf_row("orphan-duplicate", "Initial Access", "Duplicate", 99)
+    )
+    rows["Defense_Evasion"].append(
+        uwf_row("multi-technique", "Defense Evasion", "T1078", 100)
+    )
+    rows["Exfiltration"].append(
+        uwf_row("multi-technique", "Exfiltration", "T1048", 100)
+    )
     return rows
 
 
@@ -196,9 +205,11 @@ class IntegrationTests(unittest.TestCase):
             probe_metrics = json.loads((run_dir / "metrics/probe_metrics.json").read_text(encoding="utf-8"))
             self.assertTrue({"x", "gates", "c", "h", "hc"}.issubset(probe_metrics))
             with np.load(prepared_dir / "split.npz") as split:
-                self.assertEqual(sum(len(split[name]) for name in ("train", "val", "test")), 90)
+                self.assertEqual(sum(len(split[name]) for name in ("train", "val", "test")), 91)
             prepared_manifest = json.loads((prepared_dir / "manifest.json").read_text(encoding="utf-8"))
-            self.assertEqual(prepared_manifest["duplicate_sentinel_rows_ignored"], 45)
+            self.assertEqual(prepared_manifest["duplicate_sentinel_rows_ignored"], 46)
+            self.assertEqual(prepared_manifest["aggregation_summary"]["orphan_duplicate_uid_count"], 1)
+            self.assertEqual(prepared_manifest["ambiguous_technique_uid_count"], 1)
 
 
 if __name__ == "__main__":

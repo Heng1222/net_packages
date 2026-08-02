@@ -69,9 +69,31 @@ class DataTests(unittest.TestCase):
             "Exfiltration (TA0010)",
         )
 
-    def test_orphan_duplicate_sentinel_is_rejected(self) -> None:
+    def test_orphan_duplicate_sentinel_is_excluded_and_counted(self) -> None:
+        rows = [
+            uwf_row("canonical", "Exfiltration", "T1048"),
+            uwf_row("orphan-duplicate", "Initial Access", "Duplicate"),
+        ]
+        frame = aggregate_flows([pd.DataFrame(rows)])
+        self.assertEqual(frame["sample_id"].tolist(), ["canonical"])
+        self.assertEqual(frame.attrs["aggregation_summary"]["orphan_duplicate_uid_count"], 1)
+        self.assertEqual(frame.attrs["aggregation_summary"]["orphan_duplicate_row_count"], 1)
+
+    def test_canonical_multitechnique_flow_is_retained_but_probe_ineligible(self) -> None:
+        rows = [
+            uwf_row("multi-technique", "Defense Evasion", "T1078"),
+            uwf_row("multi-technique", "Exfiltration", "T1048"),
+            uwf_row("multi-technique", "Persistence", "Duplicate"),
+        ]
+        frame = aggregate_flows([pd.DataFrame(rows)])
+        targets = tactic_target_matrix(frame)
+        self.assertEqual(frame.loc[0, "technique"], "T1048|T1078")
+        self.assertFalse(bool(frame.loc[0, "probe_eligible"]))
+        self.assertEqual(int(targets.sum()), 5)
+
+    def test_all_orphan_duplicate_rows_are_rejected(self) -> None:
         row = uwf_row("orphan-duplicate", "Initial Access", "Duplicate")
-        with self.assertRaisesRegex(ValueError, "has no canonical row"):
+        with self.assertRaisesRegex(ValueError, "No canonical labeled UWF flows remain"):
             aggregate_flows([pd.DataFrame([row])])
 
     def test_stratified_split_is_reproducible_and_disjoint(self) -> None:

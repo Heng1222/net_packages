@@ -164,17 +164,19 @@ def aggregate_flows(frames: list[pd.DataFrame]) -> pd.DataFrame:
     binary_text = source["label_binary"].astype(str).str.strip().str.casefold()
     source["_duplicate_sentinel"] = technique_text.eq("duplicate") | binary_text.eq("duplicate")
     rows: list[dict[str, Any]] = []
+    orphan_duplicate_uid_count = 0
+    orphan_duplicate_row_count = 0
     for uid, group in source.groupby("uid", sort=True, dropna=False):
         if not str(uid).strip() or str(uid).lower() == "nan":
             raise ValueError("Every UWF row must have a non-empty uid.")
         canonical = group.loc[~group["_duplicate_sentinel"]]
         if canonical.empty:
-            raise ValueError(
-                f"Duplicate sentinel uid={uid} has no canonical row in the eight downloaded CSV files."
-            )
+            orphan_duplicate_uid_count += 1
+            orphan_duplicate_row_count += int(len(group))
+            continue
         techniques = sorted({_normalize_technique(value) for value in canonical["label_technique"]})
         non_benign = [value for value in techniques if value != "Benign"]
-        if len(non_benign) > 1 or (non_benign and "Benign" in techniques):
+        if non_benign and "Benign" in techniques:
             raise ValueError(f"Conflicting technique labels for uid={uid}: {techniques}")
         tactics = set(filter(None, (_normalize_tactic(value) for value in canonical["label_tactic"])))
         unknown = sorted(
@@ -186,8 +188,8 @@ def aggregate_flows(frames: list[pd.DataFrame]) -> pd.DataFrame:
         )
         if unknown:
             raise ValueError(f"Unknown UWF tactic labels for uid={uid}: {unknown}")
-        technique = non_benign[0] if non_benign else "Benign"
-        if technique == "T1078":
+        technique = "|".join(non_benign) if non_benign else "Benign"
+        if "T1078" in non_benign:
             tactics.update(T1078_TACTIC_LABELS)
         first = canonical.iloc[0]
         rows.append(
@@ -195,6 +197,7 @@ def aggregate_flows(frames: list[pd.DataFrame]) -> pd.DataFrame:
                 "sample_id": str(uid),
                 "datetime": _clean(first["datetime"], ""),
                 "technique": technique,
+                "probe_eligible": len(non_benign) == 1,
                 "tactic_labels": "|".join(sorted(tactics)),
                 "is_malicious": bool(non_benign),
                 "flow_text": flow_to_text(first),
@@ -202,7 +205,17 @@ def aggregate_flows(frames: list[pd.DataFrame]) -> pd.DataFrame:
                 "duplicate_sentinel_rows": int(group["_duplicate_sentinel"].sum()),
             }
         )
-    return pd.DataFrame(rows).sort_values("sample_id", kind="stable").reset_index(drop=True)
+    if not rows:
+        raise ValueError("No canonical labeled UWF flows remain after removing Duplicate sentinels.")
+    result = pd.DataFrame(rows).sort_values("sample_id", kind="stable").reset_index(drop=True)
+    result.attrs["aggregation_summary"] = {
+        "source_rows": int(len(source)),
+        "duplicate_sentinel_rows": int(source["_duplicate_sentinel"].sum()),
+        "orphan_duplicate_uid_count": int(orphan_duplicate_uid_count),
+        "orphan_duplicate_row_count": int(orphan_duplicate_row_count),
+        "canonical_uid_count": int(len(result)),
+    }
+    return result
 
 
 def sample_by_technique(frame: pd.DataFrame, caps: dict[str, Any] | None, seed: int) -> pd.DataFrame:
@@ -284,13 +297,18 @@ def prepare_dataset(data_config: dict[str, Any], device: torch.device, seed: int
         if manifest.get("fingerprint") == expected:
             return PreparedDataset(prepared, True, int(manifest["rows"]))
     frames = [pd.read_csv(path, dtype=str) for path in paths]
-    metadata = sample_by_technique(aggregate_flows(frames), data_config.get("class_caps"), seed)
+    aggregated = aggregate_flows(frames)
+    aggregation_summary = dict(aggregated.attrs["aggregation_summary"])
+    metadata = sample_by_technique(aggregated, data_config.get("class_caps"), seed)
     observed_techniques = set(metadata["technique"])
     expected_techniques = {"Benign", *TECHNIQUE_LABELS}
-    if observed_techniques != expected_techniques:
+    observed_single_techniques = {
+        technique for technique in observed_techniques if "|" not in technique
+    }
+    if observed_single_techniques != expected_techniques:
         raise ValueError(
             "Prepared UWF data must contain Benign plus all five expected techniques; "
-            f"expected={sorted(expected_techniques)}, observed={sorted(observed_techniques)}"
+            f"expected={sorted(expected_techniques)}, observed={sorted(observed_single_techniques)}"
         )
     split = stratified_technique_split(metadata["technique"], data_config["split"], seed)
     targets = tactic_target_matrix(metadata)
@@ -313,9 +331,11 @@ def prepare_dataset(data_config: dict[str, Any], device: torch.device, seed: int
             {
                 "fingerprint": expected,
                 "rows": len(metadata),
-                "duplicate_sentinel_rows_ignored": int(
-                    metadata["duplicate_sentinel_rows"].sum()
+                "duplicate_sentinel_rows_ignored": aggregation_summary["duplicate_sentinel_rows"],
+                "ambiguous_technique_uid_count": int(
+                    metadata["technique"].str.contains("|", regex=False).sum()
                 ),
+                "aggregation_summary": aggregation_summary,
                 "split_summary": split_summary,
             },
             indent=2,

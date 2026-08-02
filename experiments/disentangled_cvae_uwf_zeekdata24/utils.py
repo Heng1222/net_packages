@@ -62,6 +62,22 @@ def validate_config(config: dict[str, Any]) -> None:
     model = config.get("model", {})
     if int(model.get("input_dim", 0)) != 768 or int(model.get("condition_dim", 0)) != 768:
         raise ValueError("ModernBERT input_dim and condition_dim must both be 768.")
+    controls = config.get("controls")
+    if controls is not None:
+        allowed = {
+            "semantic", "random_gaussian", "random_orthogonal", "semantic_label_shuffle"
+        }
+        variants = list(map(str, controls.get("variants", [])))
+        if "semantic" not in variants or not set(variants).issubset(allowed) or len(set(variants)) != len(variants):
+            raise ValueError("controls.variants must contain semantic and unique supported controls.")
+        seeds = list(map(int, controls.get("seeds", [])))
+        if not seeds or len(set(seeds)) != len(seeds):
+            raise ValueError("controls.seeds must contain at least one unique seed.")
+        if int(controls.get("bootstrap_repeats", 0)) <= 0:
+            raise ValueError("controls.bootstrap_repeats must be positive.")
+        fraction = float(controls.get("minimum_seed_fraction", 0.8))
+        if not 0.0 < fraction <= 1.0:
+            raise ValueError("controls.minimum_seed_fraction must be in (0, 1].")
 
 
 __all__ = [

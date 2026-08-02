@@ -12,6 +12,7 @@ import pandas as pd
 import yaml
 
 from experiments.disentangled_cvae_uwf_zeekdata24.download import download_dataset
+from experiments.disentangled_cvae_uwf_zeekdata24.run_controls import main as controls_main
 from experiments.disentangled_cvae_uwf_zeekdata24.run_experiment import main
 from experiments.disentangled_cvae_uwf_zeekdata24.tests.helpers import csv_bytes, uwf_row
 
@@ -189,6 +190,17 @@ class IntegrationTests(unittest.TestCase):
             ):
                 main()
 
+            control_run_dir = root / "control-run"
+            with patch.object(
+                sys,
+                "argv",
+                [
+                    "run_controls.py", "--config", str(config_path), "--run-dir", str(control_run_dir),
+                    "--seeds", "7", "--max-epochs", "1", "--bootstrap-repeats", "20",
+                ],
+            ):
+                controls_main()
+
             self.assertTrue((run_dir / "checkpoints/disentangled_cvae.pt").is_file())
             self.assertTrue((run_dir / "reports/report.md").is_file())
             self.assertTrue((run_dir / "metrics/source_manifest.json").is_file())
@@ -210,6 +222,17 @@ class IntegrationTests(unittest.TestCase):
             self.assertEqual(prepared_manifest["duplicate_sentinel_rows_ignored"], 46)
             self.assertEqual(prepared_manifest["aggregation_summary"]["orphan_duplicate_uid_count"], 1)
             self.assertEqual(prepared_manifest["ambiguous_technique_uid_count"], 1)
+            control_decision = json.loads(
+                (control_run_dir / "metrics/semantic_geometry_decision.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                set(control_decision["comparators"]),
+                {"random_gaussian", "random_orthogonal", "semantic_label_shuffle"},
+            )
+            control_metrics = pd.read_csv(control_run_dir / "metrics/control_metrics.csv")
+            self.assertEqual(set(control_metrics["control"]), {
+                "semantic", "random_gaussian", "random_orthogonal", "semantic_label_shuffle"
+            })
 
 
 if __name__ == "__main__":

@@ -51,3 +51,37 @@ uv run python -m unittest discover -s experiments\disentangled_cvae_uwf_zeekdata
 ```
 
 integration test 使用本地 synthetic CSV 與 mock downloader，不依賴網路或 ModernBERT 權重。
+
+## ATT&CK semantic/random controls
+
+`run_controls.py` 使用同一份 prepared split、相同 seed、相同模型初始化與訓練設定，比較：
+
+- `semantic`：目前 13 個 ATT&CK vectors 加未正規化共同 centroid。
+- `random_gaussian`：14 個 matched-row-norm Gaussian vectors。
+- `random_orthogonal`：14 個 matched-row-norm orthogonal vectors。
+- `semantic_label_shuffle`：condition vectors 不變，但 train/validation 的 multi-hot label rows 各自固定 permutation；test labels 永遠保持真實。
+
+Random controls 逐列匹配 semantic matrix 的 norm，因此第 14 common vector 的非單位 norm 也被保留，只有 geometry 改變。每個 variant 都重新訓練完整模型；validation threshold 與 probe hyperparameter selection 規則不變。
+
+完整五 seeds control suite：
+
+```powershell
+uv run python experiments\disentangled_cvae_uwf_zeekdata24\run_controls.py --config experiments\disentangled_cvae_uwf_zeekdata24\configs\default.yaml
+```
+
+先跑單 seed pilot：
+
+```powershell
+uv run python experiments\disentangled_cvae_uwf_zeekdata24\run_controls.py --config experiments\disentangled_cvae_uwf_zeekdata24\configs\default.yaml --seeds 42
+```
+
+Smoke run 可加 `--max-epochs 2 --bootstrap-repeats 20`。中斷後以相同 `--run-dir ... --resume` 重用已完成 variant。預設不保留每個 control 的大型 checkpoint，但保留 training history、condition matrix、test arrays、probe/tactic/reconstruction metrics 與 paired bootstrap 結果；如需 checkpoints，設定 `controls.keep_checkpoints: true`。
+
+主要輸出：
+
+- `metrics/control_metrics.csv`：每個 seed/control 的 tactic、probe 與 reconstruction 指標。
+- `metrics/comparison_seed_*__semantic_vs_*.json`：stratified paired bootstrap 差值與 CI。
+- `metrics/semantic_geometry_decision.json`：跨 seed 最終判定。
+- `reports/semantic_geometry_controls.md`：可讀摘要。
+
+只有 semantic 對每個 random/label-shuffle comparator 的 tactic macro-F1、macro-AUPRC、C probe macro-F1 與 gates probe macro-F1 差值之 95% CI 下界皆大於 0，且至少 80% seeds 通過，才判定 ATT&CK semantic geometry 獲得支持。

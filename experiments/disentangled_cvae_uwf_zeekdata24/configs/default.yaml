@@ -104,6 +104,17 @@ evaluation:
   umap_n_neighbors: 30
   umap_min_dist: 0.1
 
+controls:
+  variants:
+    - semantic
+    - random_gaussian
+    - random_orthogonal
+    - semantic_label_shuffle
+  seeds: [42, 43, 44, 45, 46]
+  bootstrap_repeats: 1000
+  minimum_seed_fraction: 0.8
+  deterministic: true
+  keep_checkpoints: false
+
 output:
   base_dir: "outputs/disentangled_cvae_uwf_zeekdata24"
-

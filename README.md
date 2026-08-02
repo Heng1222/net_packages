@@ -53,6 +53,21 @@ The embedding backend uses `nomic-ai/modernbert-embed-base` through `sentence-tr
 
 The `requirements*.txt` files are kept for compatibility. New environments should use `pyproject.toml` and `uv.lock`.
 
+### GPUtw deployment
+
+For a GPUtw instance, clone or upload this repository below the persistent
+`/vault` mount, then run:
+
+```bash
+bash scripts/setup_gputw.sh
+source .gputw-env
+```
+
+The setup installs persistent copies of uv, Python 3.12, the locked project
+environment, and model caches; it also validates the NVIDIA driver and executes
+a real PyTorch CUDA operation. See [docs/GPUTW_DEPLOYMENT.md](docs/GPUTW_DEPLOYMENT.md)
+for upload, training, persistence, and shutdown instructions.
+
 ## Data placement
 
 Data files are intentionally ignored by git. Put local data under `Year=2022/`.

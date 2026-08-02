@@ -20,6 +20,7 @@ Thumbs.db
 # Local Codex/agent state
 .agents/
 .codex/
+.gputw-env
 
 # Training data. Keep the directory README files tracked.
 Year=*/*

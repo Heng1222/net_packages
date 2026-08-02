@@ -286,7 +286,7 @@ def write_report(
         "- Source: UWF-ZeekData24 (CC BY 4.0).",
         "- Inputs are label-free serialized Zeek connection records, not packet payload bytes.",
         f"- Rows: {len(metadata)}; train/val/test: {len(split.train)}/{len(split.val)}/{len(split.test)}.",
-        "- Official Duplicate technique sentinel rows restored as T1078: "
+        "- Official Duplicate sentinel label copies ignored in favor of canonical rows: "
         f"{int(metadata['duplicate_sentinel_rows'].sum())}.",
         "- T1078 maps to four inseparable co-occurring tactic labels in this dataset.", "",
         "## Tactic gates", "",

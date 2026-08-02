@@ -198,7 +198,7 @@ class IntegrationTests(unittest.TestCase):
             with np.load(prepared_dir / "split.npz") as split:
                 self.assertEqual(sum(len(split[name]) for name in ("train", "val", "test")), 90)
             prepared_manifest = json.loads((prepared_dir / "manifest.json").read_text(encoding="utf-8"))
-            self.assertEqual(prepared_manifest["duplicate_sentinel_rows_restored_as_t1078"], 45)
+            self.assertEqual(prepared_manifest["duplicate_sentinel_rows_ignored"], 45)
 
 
 if __name__ == "__main__":

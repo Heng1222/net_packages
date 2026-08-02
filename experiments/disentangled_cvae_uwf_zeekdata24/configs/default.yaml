@@ -1,0 +1,109 @@
+seed: 42
+
+data:
+  raw_dir: "Year=2024/UWF-ZeekData24/raw"
+  prepared_dir: "outputs/disentangled_cvae_uwf_zeekdata24/prepared/modernbert"
+  source_base_url: "https://datasets.uwf.edu/data/UWF-ZeekData24/csv"
+  source_categories:
+    - Benign
+    - Credential_Access
+    - Defense_Evasion
+    - Exfiltration
+    - Initial_Access
+    - Persistence
+    - Privilege_Escalation
+    - Reconnaissance
+  class_caps:
+    Benign: 5000
+    T1110: 5000
+    T1595: 5000
+  split:
+    strategy: "stratified_technique"
+    train_ratio: 0.7
+    val_ratio: 0.15
+    test_ratio: 0.15
+  embedder:
+    backend: "sentence_transformers"
+    model_name: "nomic-ai/modernbert-embed-base"
+    model_revision: "d556a88e332558790b210f7bdbe87da2fa94a8d8"
+    max_length: 8192
+    overflow_strategy: "chunk_mean"
+    batch_size: 4
+    normalize: true
+
+conditions:
+  path: "experiments/disentangled_cvae_step1/conditions/mitre_attack_v11_3_step1.yaml"
+  format: "yaml"
+  label_field: "label"
+  text_fields: ["keywords", "techniques"]
+  embedder_backend: "sentence_transformers"
+  embedder_model_name: "nomic-ai/modernbert-embed-base"
+  embedder_model_revision: "d556a88e332558790b210f7bdbe87da2fa94a8d8"
+  batch_size: 4
+  normalize: true
+  geometry:
+    method: "common_component_removal"
+    center: true
+    remove_top_components: 0
+    normalize: true
+    strength: 1.0
+    append_common_condition: true
+    common_label: "Common Tactic Component"
+  exclude_labels: ["Normal (TA9000)"]
+
+preprocessing:
+  normalization: "standard"
+  batch_size: 20000
+
+model:
+  input_dim: 768
+  residual_dim: 64
+  condition_dim: 768
+  encoder_hidden_dims: [1024, 512]
+  decoder_hidden_dims: [1024, 512]
+  behavior_projector_hidden_dims: [512]
+  dropout: 0.1
+  batch_norm: false
+  activation: "relu"
+  observation_variance: 1.0
+  temperature: 0.1
+  behavior_temperature: 0.1
+  residual_adversary_strength: 1.0
+  utility_margin: 0.1
+  residual_margin: 0.1
+  weights:
+    reconstruction: 1.0
+    kl: 1.0
+    decorrelation: 0.0
+    sparse: 0.001
+    gate_entropy: 0.01
+    utility: 0.0
+    residual_constraint: 0.1
+    behavior_infonce: 1.0
+    residual_adversary: 0.1
+
+training:
+  batch_size: 128
+  max_epochs: 200
+  learning_rate: 0.0005
+  weight_decay: 0.001
+  early_stopping_patience: 15
+  max_pos_weight: 50.0
+  num_workers: 0
+  device: "auto"
+
+evaluation:
+  random_state: 42
+  threshold_grid: [0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40, 0.45, 0.50, 0.55, 0.60, 0.65, 0.70, 0.75, 0.80, 0.85, 0.90, 0.95]
+  probe_c_grid: [0.01, 0.1, 1.0, 10.0]
+  shuffle_repeats: 100
+  bootstrap_repeats: 1000
+  run_visualization: true
+  visualization_backend: "umap"
+  visualization_max_samples: 5000
+  umap_n_neighbors: 30
+  umap_min_dist: 0.1
+
+output:
+  base_dir: "outputs/disentangled_cvae_uwf_zeekdata24"
+

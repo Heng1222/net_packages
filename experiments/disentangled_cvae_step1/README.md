@@ -4,7 +4,7 @@
 
 模型不直接處理封包 bytes，而是先把每筆 payload 轉成 768 維 ModernBERT embedding，再嘗試拆成兩條路：
 
-- `C`（condition 路徑）：13 個 ATT&CK Tactic 各有一個語意向量；模型替每筆 payload 算 13 個 gate，表示它和各 Tactic 的相對吻合程度。
+- `C`（condition 路徑）：13 個中心化 ATT&CK Tactic 向量，加上中心化時扣除的共同向量，共 14 個 conditional；模型替每筆 payload 算 14 個 gate。
 - `H`（residual 路徑）：64 維潛在向量，負責保留不容易由 Tactic condition 解釋、但重建原始 embedding 仍需要的資訊。
 
 最後 decoder 使用 `H + gated conditions` 重建原始 payload embedding。如果完整重建明顯優於只用 `H`，且 gate 又能對齊人工複核的 Tactic，才有證據支持這個拆分方向。
@@ -16,8 +16,8 @@
 
 可以把每筆 payload 想成一篇內容混雜的短文：
 
-- 13 張「Tactic 語意卡」描述 Initial Access、Execution、Discovery 等行為。
-- 模型先判斷這篇短文和每張卡有多像，產生 13 個 gate。
+- 13 張「Tactic 語意卡」描述 Initial Access、Execution、Discovery 等行為，另保留一張從所有卡片抽出的「共同內容卡」。
+- 模型先判斷這篇短文和 14 張卡各有多像，產生 14 個 gate。
 - 被打開的語意卡走 `C` 路徑。
 - 語意卡沒有涵蓋、但重建原文特徵仍需要的內容，放進 `H`。
 - decoder 拿 `H` 和打開的語意卡，嘗試還原原本的 768 維 payload embedding。
@@ -37,7 +37,7 @@ flowchart TD
     E --> F[只用 train fit StandardScaler<br/>所有 split → 768 維 x]
 
     G[13 個 ATT&CK Tactic 定義<br/>keywords + techniques] --> H[同一個 ModernBERT<br/>13 × 768]
-    H --> I[去共同中心 + 正規化<br/>condition matrix C: 13 × 768]
+    H --> I[13 個 residual 正規化 + 原始共同向量<br/>condition matrix C: 14 × 768]
 
     J[Step2 Golden Review<br/>Session_ID + Tactic] --> K[依 Session_ID 對回資料列<br/>有標籤列才產生 supervision]
 
@@ -47,7 +47,7 @@ flowchart TD
     L --> M[最佳 validation checkpoint]
     M --> N[Test 診斷]
     N --> O[重建 / H-only / C-only]
-    N --> P[13 個 gates 與 Tactic 預測]
+    N --> P[14 個 gates；前 13 個用於 Tactic 預測]
     N --> Q[condition 消融與 residual leakage]
     N --> R[UMAP/PCA、CSV、報告]
 ```
@@ -58,9 +58,9 @@ flowchart TD
 | --- | --- | --- | --- |
 | Prepare payload | `Step1_rawdata_cleaned.csv` | 解析 payload、ModernBERT 編碼 | `x.npy [N, 768]`、metadata、manifest |
 | Split / scale | prepared cache | 時間切分；只用 train fit scaler | 標準化 `x [N, 768]` |
-| Prepare conditions | 13 個 Tactic 的 keywords、techniques | ModernBERT、中心化、row normalize | `C [13, 768]` |
+| Prepare conditions | 13 個 Tactic 的 keywords、techniques | ModernBERT、中心化；只正規化 13 個 residual，保留原始共同向量 | `C [14, 768]` |
 | Golden supervision | `Session_ID, Tactic` | 對回 prepared metadata | target `[N]`；無標籤為 `-1` |
-| Train | batch `x [B, 768]`、固定 `C [13, 768]` | CVAE、gate、重建與 loss | checkpoint、training history |
+| Train | batch `x [B, 768]`、固定 `C [14, 768]` | CVAE、gate、重建與 loss | checkpoint、training history |
 | Evaluate | test split、最佳 checkpoint | deterministic inference 與消融 | gates、H、語意摘要、metrics、plots |
 
 `N` 是資料總筆數，`B` 是 batch size（預設 128）。
@@ -70,19 +70,19 @@ flowchart TD
 預設設定使用：
 
 - payload 維度 `D_x = 768`
-- condition 數量 `K = 13`
+- condition 數量 `K = 14`（13 個 Tactic + 1 個共同 conditional）
 - condition 維度 `D_c = 768`
 - residual 維度 `D_h = 64`
-- 每筆資料展平後的全部 conditions：`K × D_c = 13 × 768 = 9,984`
+- 每筆資料展平後的全部 conditions：`K × D_c = 14 × 768 = 10,752`
 
 ```mermaid
 flowchart LR
     X[標準化 payload x<br/>B × 768]
-    C[固定 condition matrix C<br/>13 × 768]
+    C[固定 condition matrix C<br/>14 × 768]
 
-    X --> ENCIN[concat x, flatten C<br/>B × 10,752]
+    X --> ENCIN[concat x, flatten C<br/>B × 11,520]
     C --> ENCIN
-    ENCIN --> ENC[Encoder MLP<br/>10,752 → 1,024 → 512]
+    ENCIN --> ENC[Encoder MLP<br/>11,520 → 1,024 → 512]
     ENC --> MU[mu_H<br/>B × 64]
     ENC --> LV[logvar_H<br/>B × 64]
     MU --> REP[reparameterization<br/>H: B × 64]
@@ -90,16 +90,16 @@ flowchart LR
 
     X --> PROJ[Behavior projector<br/>768 → 512 → 768<br/>L2 normalize]
     PROJ --> Q[q<br/>B × 768]
-    Q --> COS[與 13 個 C_i 算 cosine<br/>B × 13]
+    Q --> COS[與 14 個 C_i 算 cosine<br/>B × 14]
     C --> COS
-    COS --> G[sigmoid cosine/0.1<br/>gates: B × 13]
+    COS --> G[sigmoid cosine/0.1<br/>gates: B × 14]
 
-    G --> GC[g_i × C_i<br/>B × 13 × 768]
+    G --> GC[g_i × C_i<br/>B × 14 × 768]
     C --> GC
-    GC --> FLAT[flatten<br/>B × 9,984]
-    REP --> DECIN[concat H, gated C<br/>B × 10,048]
+    GC --> FLAT[flatten<br/>B × 10,752]
+    REP --> DECIN[concat H, gated C<br/>B × 10,816]
     FLAT --> DECIN
-    DECIN --> DEC[Decoder MLP<br/>10,048 → 1,024 → 512 → 768]
+    DECIN --> DEC[Decoder MLP<br/>10,816 → 1,024 → 512 → 768]
     DEC --> XR[重建 x_hat<br/>B × 768]
 
     MU -->|Gradient Reversal| ADV[Residual adversary<br/>64 → 13]
@@ -111,14 +111,14 @@ flowchart LR
 | --- | ---: | --- |
 | `x_raw` | `[B, 768]` | ModernBERT 產生的原始 payload embedding |
 | `x` | `[B, 768]` | 用 train 統計量標準化後，真正送入模型的向量 |
-| `C` | `[13, 768]` | 13 個固定的 Tactic condition 向量 |
-| encoder input | `[B, 10,752]` | `x` 加上展平的全部 `C` |
+| `C` | `[14, 768]` | 13 個中心化 Tactic 向量與 1 個共同 conditional |
+| encoder input | `[B, 11,520]` | `x` 加上展平的全部 `C` |
 | `h_mu`, `h_logvar` | `[B, 64]` | residual posterior 的平均與 log variance |
 | `H` | `[B, 64]` | 抽樣後的 residual；驗證與測試直接使用 `h_mu` |
 | behavior query `q` | `[B, 768]` | payload 投影到 condition 語意空間後的單位向量 |
-| cosine / gate | `[B, 13]` | 每筆 payload 對 13 個 condition 的分數 |
-| gated conditions | `[B, 13, 768]` | 每個 condition 向量乘上自己的 gate |
-| decoder input | `[B, 10,048]` | 64 維 `H` 加 9,984 維 gated conditions |
+| cosine / gate | `[B, 14]` | 每筆 payload 對 14 個 conditional 的分數 |
+| gated conditions | `[B, 14, 768]` | 每個 condition 向量乘上自己的 gate |
+| decoder input | `[B, 10,816]` | 64 維 `H` 加 10,752 維 gated conditions |
 | `x_hat` | `[B, 768]` | 重建的標準化 payload embedding |
 | semantic summary `C_summary` | `[B, 768]` | 依 gate 加權平均後的 condition 表示 |
 | combined `HC` | `[B, 832]` | `H [64]` 與 `C_summary [768]` 串接的分析表示 |
@@ -142,7 +142,7 @@ s_i = cosine(q, C_i)
 g_i = sigmoid(s_i / temperature)
 ```
 
-預設 `temperature = 0.1`。13 個 gate 使用獨立 sigmoid，不是 softmax，因此同一筆 payload 可以同時有多個 gate 超過門檻。
+預設 `temperature = 0.1`。14 個 gate 使用獨立 sigmoid，不是 softmax，因此同一筆 payload 可以同時有多個 gate 超過門檻。Golden classification 與 adversary 只使用前 13 個 Tactic conditions；第 14 個共同 conditional 只參與 gate、重建與非監督式 loss。
 
 需要注意：
 
@@ -240,7 +240,7 @@ outputs/disentangled_cvae_step1/prepared/step1_clean_payload_modernbert/
 
 `StandardScaler` 只在 train rows 上 fit，再 transform train/validation/test。這避免 validation/test 的均值與變異數提前洩漏進訓練。不過相同 payload 仍可能跨 split，因此另輸出 `leakage_report.json` 檢查重複的 payload hash。
 
-## 13 個 ATT&CK conditions 是什麼
+## 13 個 ATT&CK conditions 與第 14 個共同 conditional
 
 Condition 定義位於 [`conditions/mitre_attack_v11_3_step1.yaml`](conditions/mitre_attack_v11_3_step1.yaml)。每個 condition 使用 `keywords + top-level technique names` 組成文字，再用和 payload 相同的 ModernBERT 編碼。
 
@@ -260,7 +260,7 @@ Condition 定義位於 [`conditions/mitre_attack_v11_3_step1.yaml`](conditions/m
 | Resource Development (TA0042) | 準備攻擊需要的帳號、基礎設施或能力 |
 | Reconnaissance (TA0043) | 攻擊前蒐集目標資訊、規劃行動 |
 
-`Normal (TA9000)` 刻意不放進 condition matrix。它不是 ATT&CK Tactic，也沒有第 14 個「正常」gate；golden review 中的 Normal 因此無法成為 13 類 InfoNCE target。
+`Normal (TA9000)` 刻意不放進 condition matrix。第 14 個 gate 是從 13 個 Tactic embeddings 扣除的共同向量，不是「正常」類別；golden review 中的 Normal 因此仍無法成為 13 類 InfoNCE target。
 
 ### Condition geometry 為什麼要轉換
 
@@ -268,7 +268,8 @@ ATT&CK 描述常共享「adversary、system、network」等詞，原始 conditio
 
 1. 對 13 個向量求共同中心。
 2. 每個 condition 減去共同中心。
-3. 將每列重新 L2 normalize。
+3. 將 13 個中心化向量各自 L2 normalize。
+4. 把未正規化、實際被扣除的共同中心直接附加在最後一列，形成 `[14, 768]` condition matrix。模型計算 cosine gate 時會在內部暫時正規化它，但 encoder／decoder 接收的是原始 centroid 幅度。
 
 設定中的 `remove_top_components: 0` 表示目前不額外移除 PCA components。這個轉換只改 condition 幾何，不 fine-tune ModernBERT。Raw 與 transformed cosine matrices 都會輸出，方便確認 conditions 是否仍然擠在一起。
 
@@ -502,11 +503,11 @@ outputs/disentangled_cvae_step1/<timestamp>/
 | `metrics/condition_gate_summary.csv` | 每個 gate 的分布與活躍率；是否 collapse |
 | `metrics/condition_ablation_delta_mse_summary.csv` | 移除各 condition 對重建的影響 |
 | `metrics/leakage_report.json` | 相同 payload hash 是否跨 split |
-| `metrics/testset_condition_predictions.csv` | 每筆 test payload 的 13 個 gate、單一與多 condition 輸出 |
+| `metrics/testset_condition_predictions.csv` | 每筆 test payload 的 14 個 gate、Tactic 單一預測與多 conditional 輸出 |
 | `plots/training_reconstruction_losses.png` | validation full/H-only/C-only 隨 epoch 的變化 |
 | `plots/umap_*.png` | 原始、H、condition summary 空間的 2D 探索圖 |
 
-`predicted_condition` 是最高 gate 超過門檻時的單一輸出；`predicted_conditions` 則列出所有超過門檻的 conditions。若全部低於門檻，輸出 `ambiguous`。
+`predicted_condition` 只在前 13 個 Tactic gates 中選最高者；`predicted_conditions` 則列出 14 個 gates 中所有超過門檻的 conditionals。若 Tactic gates 全部低於門檻，單一輸出為 `ambiguous`。
 
 ## 常用設定
 
@@ -535,12 +536,12 @@ outputs/disentangled_cvae_step1/<timestamp>/
 | Payload | 網路 session 中承載的內容；此處使用清理後文字，不是 header metadata |
 | Embedding | 把文字壓成固定長度數字向量；語意相近的文字通常方向較接近 |
 | Tactic | MITRE ATT&CK 的高階攻擊目的，例如 Discovery；不是更細的 Technique |
-| Condition | 提供給模型的一個 Tactic 語意向量；本實驗共有 13 個 |
+| Condition | 提供給模型的固定語意向量；本實驗共有 14 個，其中 13 個是 Tactic、1 個是共同 conditional |
 | CVAE | Conditional Variational Autoencoder；在 VAE 的 encoder/decoder 中加入條件資訊 |
 | Latent space | 模型內部壓縮後的表示空間；這裡主要指 `H` |
 | Residual `H` | condition 之外、重建仍需要保留的剩餘表示 |
 | Gate | 每筆 payload 對每個 condition 的開關強度，範圍 0 到 1 |
-| Condition geometry | 13 個 condition vectors 彼此的角度與距離關係 |
+| Condition geometry | 14 個 condition vectors 彼此的角度與距離關係 |
 | Cosine similarity | 比較兩個向量方向是否相近；1 最相近、0 近似正交、-1 方向相反 |
 | Reparameterization | 用 `mu`、`logvar` 產生可反向傳播的隨機 latent sample |
 | KL divergence | 約束 `H` posterior 接近標準常態的 VAE loss |
@@ -580,3 +581,137 @@ disentangled_cvae_step1/
 ```
 
 若是第一次閱讀程式，建議順序是：`configs/default.yaml` → `run_experiment.py` → `model.py` → `training.py` → `evaluate.py`。先掌握資料怎麼流動，再深入各 loss 的公式會比較容易。
+
+## 補充：Payload、`q(x)`、Predictor 與 Gate 的關係
+
+目前 concept 路徑可以簡化為：
+
+```text
+clean_payload_list
+        │
+        ▼ ModernBERT + StandardScaler
+payload representation x [768]
+        │
+        ▼ behavior projector: 768 → 512 → 768 → L2 normalize
+behavior query q(x) [768]
+        │
+        ▼ 與 14 個 fixed condition prototypes C_i 做 cosine similarity
+condition scores s [14]
+        │
+        ├─→ 前 13 個 s / behavior_temperature → golden-label CE
+        │
+        └─→ gates = sigmoid(s / temperature) → prediction + decoder
+```
+
+### Payload representation `x`
+
+`x` 不是原始 byte 或封包文字，而是 `clean_payload_list` 經 ModernBERT 編碼、再用 training split 的 StandardScaler 轉換後的 768 維向量。同一個 `x` 同時送入 concept 路徑與 residual 路徑：
+
+```text
+                    ┌─→ behavior projector → q(x) → gates
+x [768] ──────────┤
+                    └─→ residual encoder → H
+```
+
+### Behavior query `q(x)`
+
+`q(x)` 在程式中名為 `behavior_query`，是可學習 behavior projector 的輸出：
+
+```text
+q(x) = normalize(MLP(x))
+```
+
+它仍是 768 維，但功能不同於 `x`：`x` 是通用 payload representation，`q(x)` 則是為了與 Tactic condition prototypes 比較而學到的 query。`q(x)` 本身不是 Tactic prediction。
+
+### Condition prototype `C_i` 與 Predictor
+
+前 13 個 `C_i` 是中心化並正規化後的 Tactic 768 維固定文字向量，第 14 個是中心化時實際扣除、未正規化的共同向量。目前沒有另一個 `Linear(768, 13)` 分類層；predictor 是「behavior projector + fixed condition prototype matching」的組合。
+
+對第 `i` 個 condition：
+
+```text
+s_i = cosine(q(x), C_i)
+```
+
+計算 cosine 時，模型會暫時正規化 `q(x)` 與所有 `C_i`；第 14 個共同向量儲存在 condition matrix 中的原始幅度仍會保留給 encoder／decoder。14 個 scores 一起形成 `gate_logits [14]`。Golden supervision 只取前 13 個 Tactic scores，除以 `behavior_temperature` 後做 cross entropy；共同 conditional 不參與分類 loss：
+
+```text
+behavior_logits_i = s_i / behavior_temperature
+```
+
+### Gate
+
+每個 gate 由對應的 cosine score 獲得：
+
+```text
+g_i = sigmoid(s_i / temperature)
+```
+
+因此一筆 payload 會得到 `gates [14]`。Gate 同時有兩個用途：
+
+1. 評估階段使用 `argmax(gates)` 取得單一 prediction，並列出所有超過 threshold 的 multi-condition evidence。
+2. 將各 condition 放大或縮小為 `g_i C_i`，再與 residual `H` 一起送進 decoder。
+
+目前 `temperature=0.1` 會大幅放大小量 cosine 差異，而 `gate=0.5` 只等價於 `cosine(q(x), C_i)=0`。在 held-out labels 校準之前，gate 應解讀為 **condition evidence score**，而不是 Tactic 機率或封包中的 Tactic 百分比。
+
+`Sess_Tactic_predict` 是早期其他模型產生的 metadata，不會進入上述 predictor、gate 或 training loss。目前只有 Step2 golden review 的 `Tactic` 會提供 semantic supervision。
+
+## 補充：Encoder 與 Decoder 是否需要完整 768 維 `C_i`
+
+結論需依據 `C_i` 所在的路徑分開判斷：
+
+| 位置 | 目前做法 | 是否必要 | 建議 |
+| --- | --- | --- | --- |
+| `q(x)` 與 concept 比對 | 使用完整 `C_i [768]` 算 cosine | 有必要 | 保留；這是文字 concept prior 真正影響 gate 的地方 |
+| Residual encoder | `concat(x, flatten(C))` | 沒有必要 | 優先改成只輸入 `x` |
+| Decoder | `concat(H, flatten(g_i C_i))` | 不是必要 | 主 baseline 改用 `[H, gates]`；需保留 concept 內容時用小型共享 adapter 壓縮後再聚合 |
+
+### Residual encoder：建議移除完整 `C`
+
+目前 residual encoder 輸入是：
+
+```text
+concat(x [768], flatten(C) [14 × 768]) = 11,520 維
+```
+
+但 `C` 對每一筆 payload 都完全相同，並未提供 sample-specific condition。對第一個 linear layer 而言：
+
+```text
+W_x x + W_C flatten(C) + b
+```
+
+`W_C flatten(C)` 也是每筆樣本都相同的常數，可以被 bias 吸收。因此目前將完整 `C` 放入 residual encoder 幾乎不增加資訊，卻將第一層從 `768 → 1024` 擴張成 `11,520 → 1024`，約多出 1,101 萬個 weights。
+
+建議 residual 路徑先使用：
+
+```text
+H = Encoder_H(x)
+```
+
+只有在 condition vocabulary 會每筆變化，或 encoder 接收的是 sample-specific known conditions 時，才有必要將 condition 資訊放進 residual encoder。
+
+### Decoder：完整 `g_i C_i` 有意義，但不是必需
+
+目前 decoder 輸入：
+
+```text
+H [64] + flatten(g_i C_i) [10,752] = 10,816 維
+```
+
+這個設計保留了每個 concept prototype 的完整方向與獨立位置，但因為 `C_i` 是固定的，對 decoder 第一個 linear layer而言：
+
+```text
+W_i(g_i C_i) = g_i(W_i C_i)
+```
+
+`W_i C_i` 可以在訓練中被學成任意方向，所以每個 `g_i C_i [768]` 的樣本間自由度實際上仍只有 scalar `g_i`。將它們展開成 10,752 維不能自動保證 decoder 遵守 condition 文字語意，卻會使第一層約多出 1,101 萬個 weights。
+
+建議建立三個可比較的 decoder ablations：
+
+1. **Concept bottleneck baseline**：`Decoder([H, gates])`，維度為 `64 + 14 = 78`，最能檢驗 14 個 gates 是否已包含足夠 concept 資訊。
+2. **Compressed semantic decoder**：使用所有 conditions 共享的 `phi(C_i): 768 → 16/32/64`，再輸入 `g_i phi(C_i)` 或將其聚合。這可保留文字 concept 內容，同時限制容量。
+3. **Current full-condition decoder**：保留 `flatten(g_i C_i)` 作為高容量 ablation，而不是預設必要設計。
+
+若未來希望只靠新的 condition 文字就加入新 concept，應使用對所有 `C_i` 共享參數的 `phi(C_i)` 與 permutation-invariant aggregation/attention。目前展開成固定 `14 × 768` 的 decoder 輸入形狀仍綁定 14 個 concepts，並不會因為使用完整 768 維 condition 就自動具有 zero-shot 擴充能力。
+
+綜合建議是：**保留 768 維 `C_i` 在 `q(x) → cosine → gate` 的語意比對路徑；從 residual encoder 移除固定完整 `C`；decoder 先以 `[H, gates]` 為主 baseline，再將 compressed/full-condition 版本作為 ablation 檢驗 condition 文字內容與模型容量的實際貢獻。**

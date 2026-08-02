@@ -57,6 +57,9 @@ conditions:
     remove_top_components: 0
     normalize: true
     strength: 1.0
+    # Retain the exact, unnormalized deducted centroid as the 14th conditional.
+    append_common_condition: true
+    common_label: "Common Tactic Component"
   exclude_labels:
     - "Normal (TA9000)"
 
@@ -92,8 +95,8 @@ model:
     reconstruction: 1.0
     kl: 1.0
     decorrelation: 0.0
-    sparse: 0.0
-    gate_entropy: 0.0
+    sparse: 0.001
+    gate_entropy: 0.01
     utility: 0.0
     residual_constraint: 0.1
     behavior_infonce: 1.0

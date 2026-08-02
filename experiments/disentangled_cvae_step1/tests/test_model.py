@@ -72,6 +72,25 @@ class ModelTests(unittest.TestCase):
         self.assertEqual(losses["ablation_delta_mse"].shape, (5, 3))
         self.assertTrue(torch.count_nonzero(losses["ablation_delta_mse"]) == 0)
 
+    def test_common_condition_is_excluded_from_supervised_classification(self) -> None:
+        model = DisentangledConditionalVAE(
+            input_dim=768,
+            residual_dim=8,
+            condition_count=4,
+            condition_dim=768,
+            supervised_condition_count=3,
+            encoder_hidden_dims=[32],
+            decoder_hidden_dims=[32],
+            behavior_projector_hidden_dims=[16],
+        )
+        output = model(torch.randn(5, 768), torch.randn(4, 768), sample=False)
+
+        self.assertEqual(output["gates"].shape, (5, 4))
+        self.assertEqual(output["behavior_logits"].shape, (5, 3))
+        self.assertEqual(output["residual_adversary_logits"].shape, (5, 3))
+        losses = model.loss(output, torch.randn(5, 768), torch.tensor([0, 1, 2, -1, 1]))
+        self.assertTrue(torch.isfinite(losses["behavior_infonce_loss"]))
+
 
 if __name__ == "__main__":
     unittest.main()

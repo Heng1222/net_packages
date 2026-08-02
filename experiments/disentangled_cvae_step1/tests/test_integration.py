@@ -72,6 +72,15 @@ class IntegrationTests(unittest.TestCase):
                     "embedder_backend": "hashing",
                     "output_dim": 768,
                     "normalize": True,
+                    "geometry": {
+                        "method": "common_component_removal",
+                        "center": True,
+                        "remove_top_components": 0,
+                        "normalize": True,
+                        "strength": 1.0,
+                        "append_common_condition": True,
+                        "common_label": "Common Tactic Component",
+                    },
                     "exclude_labels": ["Normal (TA9000)"],
                 },
                 "supervision": {
@@ -179,13 +188,19 @@ class IntegrationTests(unittest.TestCase):
             predictions = pd.read_csv(run_dir / "metrics" / "testset_condition_predictions.csv")
             self.assertIn("gold_tactic", predictions.columns)
             prob_cols = [column for column in predictions.columns if column.startswith("condition_prob__")]
-            self.assertGreater(len(prob_cols), 0)
+            self.assertEqual(len(prob_cols), 14)
+            self.assertIn("condition_prob__Common Tactic Component", prob_cols)
             self.assertTrue(((predictions[prob_cols] >= 0.0) & (predictions[prob_cols] <= 1.0)).all().all())
             self.assertIn("active_condition_count", predictions.columns)
             self.assertIn("predicted_conditions", predictions.columns)
             allowed = {column.replace("condition_prob__", "", 1) for column in prob_cols}
             allowed.add("ambiguous")
             self.assertTrue(set(predictions["predicted_condition"]).issubset(allowed))
+            self.assertNotIn("Common Tactic Component", set(predictions["predicted_condition"]))
+            with np.load(run_dir / "embeddings" / "condition_embeddings.npz") as archive:
+                self.assertEqual(archive["matrix"].shape, (14, 768))
+                self.assertEqual(archive["tactic_labels"].shape, (13,))
+                self.assertEqual(str(archive["labels"][-1]), "Common Tactic Component")
             subset = pd.read_csv(run_dir / "metrics" / "testset_subset_100.csv")
             self.assertLessEqual(int(subset.groupby("predicted_condition").size().max()), 100)
 

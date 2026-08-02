@@ -30,6 +30,8 @@ class ConditionEmbeddingTests(unittest.TestCase):
         self.assertTrue(geometry["center"])
         self.assertEqual(geometry["remove_top_components"], 0)
         self.assertTrue(geometry["normalize"])
+        self.assertTrue(geometry["append_common_condition"])
+        self.assertEqual(geometry["common_label"], "Common Tactic Component")
 
     def test_text_fields_join_keywords_and_techniques(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
@@ -116,6 +118,68 @@ class ConditionEmbeddingTests(unittest.TestCase):
         self.assertEqual(metadata["condition_geometry"]["method"], "common_component_removal")
         self.assertGreater(metadata["raw_condition_cosine"]["offdiag_mean"], 0.95)
         self.assertLess(metadata["transformed_condition_cosine"]["offdiag_mean"], 0.0)
+
+    def test_deducted_common_vector_is_appended_as_last_condition(self) -> None:
+        raw = np.asarray(
+            [
+                [3.0, 1.0, 0.0, 0.0],
+                [3.0, 0.0, 1.0, 0.0],
+                [3.0, 0.0, 0.0, 1.0],
+            ],
+            dtype=np.float32,
+        )
+
+        transformed, metadata = apply_condition_geometry(
+            raw,
+            {
+                "method": "common_component_removal",
+                "center": True,
+                "remove_top_components": 0,
+                "normalize": True,
+                "append_common_condition": True,
+                "common_label": "Shared",
+            },
+        )
+
+        self.assertEqual(transformed.shape, (4, 4))
+        expected_common = raw.mean(axis=0)
+        np.testing.assert_allclose(transformed[-1], expected_common, atol=1e-6)
+        common = metadata["condition_geometry"]["common_condition"]
+        self.assertTrue(common["appended"])
+        self.assertEqual(common["index"], 3)
+        self.assertEqual(common["label"], "Shared")
+
+    def test_loader_appends_common_after_all_tactic_labels(self) -> None:
+        config = yaml.safe_load(
+            Path("experiments/disentangled_cvae_step1/configs/default.yaml").read_text(
+                encoding="utf-8"
+            )
+        )["conditions"]
+        config["embedder_backend"] = "hashing"
+        config["output_dim"] = 8
+        with tempfile.TemporaryDirectory() as folder:
+            result = load_condition_embeddings(
+                config,
+                None,
+                torch.device("cpu"),
+                Path(folder),
+            )
+
+        self.assertEqual(len(result.tactic_labels), 13)
+        self.assertEqual(len(result.labels), 14)
+        self.assertEqual(result.labels[-1], "Common Tactic Component")
+        self.assertEqual(result.matrix.shape, (14, 8))
+        self.assertEqual(result.raw_matrix.shape, (14, 8))
+        np.testing.assert_allclose(
+            result.matrix[-1],
+            result.raw_matrix[:-1].mean(axis=0),
+            atol=1e-6,
+        )
+        np.testing.assert_allclose(
+            result.raw_matrix[-1],
+            result.raw_matrix[:-1].mean(axis=0),
+            atol=1e-6,
+        )
 
     def test_missing_text_field_raises(self) -> None:
         with tempfile.TemporaryDirectory() as folder:

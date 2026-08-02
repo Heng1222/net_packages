@@ -41,6 +41,22 @@ class ConditionPredictionTests(unittest.TestCase):
             np.asarray([[0.8, 0.2], [0.6, 0.7], [0.49, 0.2]], dtype=np.float32),
         )
 
+    def test_common_condition_is_exported_but_not_used_as_tactic_prediction(self) -> None:
+        metadata = pd.DataFrame({"Session_ID": ["s1"]})
+        frame = build_test_condition_predictions(
+            metadata,
+            np.asarray([0]),
+            np.asarray([[0.6, 0.7, 0.99]], dtype=np.float32),
+            ["Tactic A", "Tactic B", "Common"],
+            threshold=0.5,
+            prediction_condition_count=2,
+        )
+
+        self.assertEqual(frame.loc[0, "predicted_condition"], "Tactic B")
+        self.assertEqual(frame.loc[0, "active_condition_count"], 3)
+        self.assertIn("Common", frame.loc[0, "predicted_conditions"])
+        self.assertAlmostEqual(float(frame.loc[0, "condition_prob__Common"]), 0.99, places=6)
+
     def test_behavior_alignment_metrics_uses_gold_tactic(self) -> None:
         predictions = pd.DataFrame(
             {

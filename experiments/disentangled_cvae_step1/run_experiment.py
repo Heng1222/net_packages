@@ -153,7 +153,7 @@ def run_train(config: dict, run_dir: Path, device: torch.device, logger: logging
     supervision = load_behavior_supervision(
         config.get("supervision"),
         metadata,
-        conditions.labels,
+        conditions.tactic_labels,
         config.get("_meta", {}).get("project_root", PROJECT_ROOT),
     )
     write_json(supervision.summary, run_dir / "metrics" / "behavior_supervision_summary.json")
@@ -184,11 +184,13 @@ def run_train(config: dict, run_dir: Path, device: torch.device, logger: logging
 
     model_config = dict(config["model"])
     model_config["condition_count"] = len(conditions.labels)
+    model_config["supervised_condition_count"] = len(conditions.tactic_labels)
     model_config["condition_dim"] = conditions.dimension
     raw_condition_matrix = conditions.raw_matrix if conditions.raw_matrix is not None else conditions.matrix
     np.savez_compressed(
         run_dir / "embeddings" / "condition_embeddings.npz",
         labels=np.asarray(conditions.labels, dtype=str),
+        tactic_labels=np.asarray(conditions.tactic_labels, dtype=str),
         matrix=conditions.matrix,
         raw_matrix=raw_condition_matrix,
     )
@@ -247,13 +249,14 @@ def run_train(config: dict, run_dir: Path, device: torch.device, logger: logging
         test_outputs["gates"],
         conditions.labels,
         threshold=condition_threshold,
+        prediction_condition_count=len(conditions.tactic_labels),
     )
     logger.info("Writing test predictions and condition summaries")
     test_predictions.to_csv(run_dir / "metrics" / "testset_condition_predictions.csv", index=False)
     write_testset_subset(test_predictions, run_dir / "metrics" / "testset_subset_100.csv")
     write_json(test_outputs["loss_summary"], run_dir / "metrics" / "loss_summary.json")
     write_json(
-        behavior_alignment_metrics(test_predictions, conditions.labels),
+        behavior_alignment_metrics(test_predictions, conditions.tactic_labels),
         run_dir / "metrics" / "behavior_alignment_metrics.json",
     )
     write_condition_gate_summary(

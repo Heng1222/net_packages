@@ -97,3 +97,19 @@ zero-common, shuffled gates, and every tactic-condition ablation.
 Good reconstruction alone is not evidence of semantic disentanglement. If random conditions perform
 the same as MITRE conditions, shuffled gates do not hurt reconstruction, or residual-only reconstruction
 matches the full model, the semantic decomposition hypothesis is not supported.
+
+## Geometry validation before retraining
+
+The first three follow-up checks (full condition text, train-mean reconstruction baseline, and removal
+of the payload mean/top common component) can be run without retraining the CVAE:
+
+```powershell
+uv run python experiments\center_augmented_cvae_step1\geometry_validation.py `
+  --config experiments\center_augmented_cvae_step1\configs\default.yaml `
+  --prepared-dir outputs\center_augmented_cvae_step1\prepared\step1_clean_payload_modernbert `
+  --reference-run outputs\center_augmented_cvae_step1\YYYY-MM-DD_HHMMSS
+```
+
+The prepared directory may be any compatible artifact produced with the exact payload column,
+ModernBERT model/revision, chunking strategy, and L2 normalization. No labels are used to fit the
+payload mean or top component; Step2 labels remain evaluation-only.

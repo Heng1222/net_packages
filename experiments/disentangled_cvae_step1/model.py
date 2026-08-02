@@ -72,6 +72,7 @@ class DisentangledConditionalVAE(nn.Module):
         condition_dim: int,
         encoder_hidden_dims: list[int],
         decoder_hidden_dims: list[int],
+        supervised_condition_count: int | None = None,
         behavior_projector_hidden_dims: list[int] | None = None,
         dropout: float = 0.0,
         batch_norm: bool = False,
@@ -97,6 +98,11 @@ class DisentangledConditionalVAE(nn.Module):
         self.residual_dim = int(residual_dim)
         self.condition_count = int(condition_count)
         self.condition_dim = int(condition_dim)
+        self.supervised_condition_count = int(
+            condition_count if supervised_condition_count is None else supervised_condition_count
+        )
+        if not 0 < self.supervised_condition_count <= self.condition_count:
+            raise ValueError("supervised_condition_count must be between 1 and condition_count.")
         self.observation_variance = float(observation_variance)
         self.temperature = float(temperature)
         self.behavior_temperature = float(behavior_temperature)
@@ -125,7 +131,7 @@ class DisentangledConditionalVAE(nn.Module):
         self.h_mu = nn.Linear(encoded_dim, self.residual_dim)
         self.h_logvar = nn.Linear(encoded_dim, self.residual_dim)
         self.residual_reversal = GradientReversal(self.residual_adversary_strength)
-        self.residual_adversary = nn.Linear(self.residual_dim, self.condition_count)
+        self.residual_adversary = nn.Linear(self.residual_dim, self.supervised_condition_count)
         self.behavior_projector_body, behavior_projector_dim = build_mlp(
             self.input_dim,
             self.behavior_projector_hidden_dims,
@@ -148,6 +154,7 @@ class DisentangledConditionalVAE(nn.Module):
             "residual_dim",
             "condition_count",
             "condition_dim",
+            "supervised_condition_count",
             "encoder_hidden_dims",
             "decoder_hidden_dims",
             "behavior_projector_hidden_dims",
@@ -225,7 +232,9 @@ class DisentangledConditionalVAE(nn.Module):
             "h_logvar": h_logvar,
             "conditions": conditions,
             "behavior_query": behavior_query,
-            "behavior_logits": gate_logits / self.behavior_temperature,
+            "behavior_logits": (
+                gate_logits[:, : self.supervised_condition_count] / self.behavior_temperature
+            ),
             "gate_logits": gate_logits,
             "gates": gates,
         }

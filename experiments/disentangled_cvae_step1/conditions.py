@@ -17,6 +17,7 @@ from .embedders import build_text_embedder
 @dataclass(slots=True)
 class ConditionEmbeddings:
     labels: list[str]
+    tactic_labels: list[str]
     matrix: np.ndarray
     metadata: dict[str, Any]
     raw_matrix: np.ndarray | None = None
@@ -151,11 +152,17 @@ def _condition_geometry_config(config: dict[str, Any]) -> dict[str, Any]:
 def apply_condition_geometry(matrix: np.ndarray, config: dict[str, Any] | None) -> tuple[np.ndarray, dict[str, Any]]:
     geometry = dict(config or {})
     method = str(geometry.get("method", "none")).lower()
+    append_common = bool(geometry.get("append_common_condition", False))
     raw = np.asarray(matrix, dtype=np.float32)
     raw_normalized = _normalize_rows(raw)
     raw_summary = cosine_similarity_summary(raw_normalized)
 
     if method in {"none", "raw"}:
+        if append_common:
+            raise ValueError(
+                "conditions.geometry.append_common_condition requires centering to define "
+                "the deducted common vector."
+            )
         return raw.astype(np.float32), {
             "condition_geometry": {"method": "none"},
             "raw_condition_cosine": raw_summary,
@@ -174,8 +181,14 @@ def apply_condition_geometry(matrix: np.ndarray, config: dict[str, Any] | None) 
         raise ValueError("conditions.geometry.strength must be between 0.0 and 1.0.")
 
     transformed = np.asarray(raw, dtype=np.float64)
+    common_vector: np.ndarray | None = None
     if centered:
-        transformed = transformed - transformed.mean(axis=0, keepdims=True)
+        common_vector = transformed.mean(axis=0, keepdims=True)
+        transformed = transformed - common_vector
+    elif append_common:
+        raise ValueError(
+            "conditions.geometry.append_common_condition requires conditions.geometry.center=true."
+        )
 
     remove_top_components = 0
     if method == "common_component_removal":
@@ -200,6 +213,21 @@ def apply_condition_geometry(matrix: np.ndarray, config: dict[str, Any] | None) 
             fallback=raw,
         )
 
+    common_metadata: dict[str, Any] = {"appended": False}
+    if append_common:
+        assert common_vector is not None
+        if float(np.linalg.norm(common_vector)) < 1e-12:
+            raise ValueError("The deducted common condition vector is zero and cannot be appended.")
+        # Preserve the exact vector deducted during centering. Gate cosine
+        # computation normalizes conditions inside the model when needed.
+        transformed = np.vstack((transformed, common_vector.astype(np.float32)))
+        common_metadata = {
+            "appended": True,
+            "index": int(raw.shape[0]),
+            "label": str(geometry.get("common_label", "Common Tactic Component")),
+            "norm_before_normalization": float(np.linalg.norm(common_vector)),
+        }
+
     transformed = transformed.astype(np.float32)
     return transformed, {
         "condition_geometry": {
@@ -208,10 +236,37 @@ def apply_condition_geometry(matrix: np.ndarray, config: dict[str, Any] | None) 
             "normalize": normalize,
             "remove_top_components": remove_top_components,
             "strength": strength,
+            "common_condition": common_metadata,
         },
-        "raw_condition_cosine": raw_summary,
+        "raw_condition_cosine": cosine_similarity_summary(
+            np.vstack((raw, common_vector)) if append_common else raw_normalized
+        ),
         "transformed_condition_cosine": cosine_similarity_summary(transformed),
     }
+
+
+def _condition_output_labels(
+    tactic_labels: list[str],
+    geometry_metadata: dict[str, Any],
+) -> list[str]:
+    common = geometry_metadata.get("condition_geometry", {}).get("common_condition", {})
+    if not common.get("appended", False):
+        return list(tactic_labels)
+    common_label = str(common["label"])
+    if common_label in tactic_labels:
+        raise ValueError(f"Common condition label duplicates a tactic label: {common_label}")
+    return [*tactic_labels, common_label]
+
+
+def _raw_output_matrix(
+    raw_tactics: np.ndarray,
+    geometry_metadata: dict[str, Any],
+) -> np.ndarray:
+    common = geometry_metadata.get("condition_geometry", {}).get("common_condition", {})
+    if not common.get("appended", False):
+        return np.asarray(raw_tactics, dtype=np.float32)
+    centroid = np.asarray(raw_tactics, dtype=np.float32).mean(axis=0, keepdims=True)
+    return np.vstack((raw_tactics, centroid)).astype(np.float32)
 
 
 def _cache_key(config: dict[str, Any], labels: list[str], texts: list[str], text_fields: list[str]) -> str:
@@ -276,7 +331,9 @@ def load_condition_embeddings(
             raw_matrix = archive["matrix"].astype(np.float32)
             labels = archive["labels"].astype(str).tolist()
         matrix, geometry_metadata = apply_condition_geometry(raw_matrix, _condition_geometry_config(config))
+        output_labels = _condition_output_labels(labels, geometry_metadata)
         return ConditionEmbeddings(
+            output_labels,
             labels,
             matrix,
             {
@@ -286,7 +343,7 @@ def load_condition_embeddings(
                 **geometry_metadata,
                 **metadata,
             },
-            raw_matrix,
+            _raw_output_matrix(raw_matrix, geometry_metadata),
         )
 
     embedder_config = {
@@ -300,11 +357,13 @@ def load_condition_embeddings(
     embedder = build_text_embedder(embedder_config, device)
     raw_matrix = embedder.encode(texts).astype(np.float32)
     matrix, geometry_metadata = apply_condition_geometry(raw_matrix, _condition_geometry_config(config))
+    output_labels = _condition_output_labels(requested, geometry_metadata)
     np.savez_compressed(cache_path, labels=np.asarray(requested, dtype=str), matrix=raw_matrix)
     meta_path.write_text(
         json.dumps(
             {
-                "labels": requested,
+                "labels": output_labels,
+                "tactic_labels": requested,
                 "cache_path": str(cache_path),
                 "embedding_dim": int(matrix.shape[1]),
                 "text_fields": text_fields,
@@ -318,6 +377,7 @@ def load_condition_embeddings(
         encoding="utf-8",
     )
     return ConditionEmbeddings(
+        output_labels,
         requested,
         matrix,
         {
@@ -327,5 +387,5 @@ def load_condition_embeddings(
             **geometry_metadata,
             **metadata,
         },
-        raw_matrix,
+        _raw_output_matrix(raw_matrix, geometry_metadata),
     )

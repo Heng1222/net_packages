@@ -36,6 +36,7 @@ def build_test_condition_predictions(
     condition_labels: list[str],
     threshold: float = 0.5,
     ambiguous_label: str = AMBIGUOUS_LABEL,
+    prediction_condition_count: int | None = None,
 ) -> pd.DataFrame:
     indices = np.asarray(test_indices, dtype=np.int64)
     gate_values = np.asarray(gates, dtype=np.float32)
@@ -45,6 +46,13 @@ def build_test_condition_predictions(
         raise ValueError("test_indices and gates must have the same row count.")
     if gate_values.shape[1] != len(condition_labels):
         raise ValueError("gates column count must match condition_labels.")
+    prediction_count = (
+        len(condition_labels)
+        if prediction_condition_count is None
+        else int(prediction_condition_count)
+    )
+    if not 0 < prediction_count <= len(condition_labels):
+        raise ValueError("prediction_condition_count must be between 1 and the condition count.")
 
     probabilities = independent_condition_probabilities(gate_values)
     base = metadata.iloc[indices].reset_index(drop=True).copy()
@@ -60,9 +68,11 @@ def build_test_condition_predictions(
         frame[f"condition_prob__{label}"] = probabilities[:, index]
 
     if len(frame):
-        max_indices = np.argmax(probabilities, axis=1)
-        max_probabilities = probabilities[np.arange(len(probabilities)), max_indices]
-        max_conditions = np.asarray(condition_labels, dtype=object)[max_indices]
+        prediction_probabilities = probabilities[:, :prediction_count]
+        prediction_labels = condition_labels[:prediction_count]
+        max_indices = np.argmax(prediction_probabilities, axis=1)
+        max_probabilities = prediction_probabilities[np.arange(len(probabilities)), max_indices]
+        max_conditions = np.asarray(prediction_labels, dtype=object)[max_indices]
         active = probabilities >= float(threshold)
         active_counts = active.sum(axis=1)
         predicted_multi = []

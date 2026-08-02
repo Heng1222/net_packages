@@ -35,7 +35,9 @@ def uwf_row(uid: str, tactic: str = "none", technique: str = "none", index: int 
             "datetime": f"2024-03-{1 + index % 20:02d}T00:00:00Z",
             "label_tactic": tactic,
             "label_technique": technique,
-            "label_binary": "False" if technique == "none" else "True",
+            "label_binary": (
+                "False" if technique == "none" else "Duplicate" if technique == "Duplicate" else "True"
+            ),
             "label_cve": "none",
         }
     )
@@ -44,4 +46,3 @@ def uwf_row(uid: str, tactic: str = "none", technique: str = "none", index: int 
 
 def csv_bytes(rows: list[dict[str, Any]]) -> bytes:
     return pd.DataFrame(rows, columns=REQUIRED_COLUMNS).to_csv(index=False).encode("utf-8")
-

@@ -35,6 +35,15 @@ TACTIC_LABELS = (
 
 TECHNIQUE_LABELS = ("T1048", "T1078", "T1110", "T1190", "T1595")
 
+T1078_TACTIC_LABELS = frozenset(
+    {
+        "Defense Evasion (TA0005)",
+        "Initial Access (TA0001)",
+        "Persistence (TA0003)",
+        "Privilege Escalation (TA0004)",
+    }
+)
+
 UWF_TACTIC_MAP = {
     "Credential Access": "Credential Access (TA0006)",
     "Defense Evasion": "Defense Evasion (TA0005)",
@@ -130,10 +139,18 @@ def _normalize_tactic(value: Any) -> str | None:
     return UWF_TACTIC_MAP.get(text)
 
 
-def _normalize_technique(value: Any) -> str:
+def _normalize_technique(value: Any, tactic_value: Any) -> str:
     text = _clean(value, "")
     if not text or text.lower() == "none":
         return "Benign"
+    if text.lower() == "duplicate":
+        tactic = _normalize_tactic(tactic_value)
+        if tactic not in T1078_TACTIC_LABELS:
+            raise ValueError(
+                "label_technique='Duplicate' is only valid for a UWF T1078 tactic row; "
+                f"got label_tactic={_clean(tactic_value)!r}"
+            )
+        return "T1078"
     match = re.search(r"\bT\d{4}(?:\.\d{3})?\b", text.upper())
     if match is None:
         raise ValueError(f"Cannot extract an ATT&CK technique ID from label_technique={text!r}")
@@ -153,11 +170,18 @@ def aggregate_flows(frames: list[pd.DataFrame]) -> pd.DataFrame:
     for uid, group in source.groupby("uid", sort=True, dropna=False):
         if not str(uid).strip() or str(uid).lower() == "nan":
             raise ValueError("Every UWF row must have a non-empty uid.")
-        techniques = sorted({_normalize_technique(value) for value in group["label_technique"]})
+        techniques = sorted(
+            {
+                _normalize_technique(technique, tactic)
+                for technique, tactic in zip(
+                    group["label_technique"], group["label_tactic"], strict=True
+                )
+            }
+        )
         non_benign = [value for value in techniques if value != "Benign"]
         if len(non_benign) > 1 or (non_benign and "Benign" in techniques):
             raise ValueError(f"Conflicting technique labels for uid={uid}: {techniques}")
-        tactics = sorted(filter(None, (_normalize_tactic(value) for value in group["label_tactic"])))
+        tactics = set(filter(None, (_normalize_tactic(value) for value in group["label_tactic"])))
         unknown = sorted(
             {
                 _clean(value)
@@ -167,16 +191,22 @@ def aggregate_flows(frames: list[pd.DataFrame]) -> pd.DataFrame:
         )
         if unknown:
             raise ValueError(f"Unknown UWF tactic labels for uid={uid}: {unknown}")
+        technique = non_benign[0] if non_benign else "Benign"
+        if technique == "T1078":
+            tactics.update(T1078_TACTIC_LABELS)
         first = group.iloc[0]
         rows.append(
             {
                 "sample_id": str(uid),
                 "datetime": _clean(first["datetime"], ""),
-                "technique": non_benign[0] if non_benign else "Benign",
-                "tactic_labels": "|".join(tactics),
+                "technique": technique,
+                "tactic_labels": "|".join(sorted(tactics)),
                 "is_malicious": bool(non_benign),
                 "flow_text": flow_to_text(first),
                 "duplicate_source_rows": int(len(group)),
+                "duplicate_sentinel_rows": int(
+                    group["label_technique"].astype(str).str.casefold().eq("duplicate").sum()
+                ),
             }
         )
     return pd.DataFrame(rows).sort_values("sample_id", kind="stable").reset_index(drop=True)
@@ -285,7 +315,20 @@ def prepare_dataset(data_config: dict[str, Any], device: torch.device, seed: int
         }
         for name, indices in (("train", split.train), ("val", split.val), ("test", split.test))
     }
-    manifest_path.write_text(json.dumps({"fingerprint": expected, "rows": len(metadata), "split_summary": split_summary}, indent=2), encoding="utf-8")
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "fingerprint": expected,
+                "rows": len(metadata),
+                "duplicate_sentinel_rows_restored_as_t1078": int(
+                    metadata["duplicate_sentinel_rows"].sum()
+                ),
+                "split_summary": split_summary,
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
     return PreparedDataset(prepared, False, len(metadata))
 
 

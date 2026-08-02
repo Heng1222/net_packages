@@ -10,6 +10,7 @@
 - decoder、gates、ablation 都使用 14 個 conditionals；只有前 13 個 tactic logits 使用 multi-label `BCEWithLogitsLoss`，共同 conditional 不接受 tactic label supervision。
 - residual adversary 同樣預測 13 維 multi-hot tactic，`pos_weight` 只用 training split 計算。
 - T1078 同時合併為 Initial Access、Defense Evasion、Persistence、Privilege Escalation。這四個標籤在此資料集不可分，只能解讀為群組 alignment。
+- 官方 CSV 以 `label_technique=Duplicate` 標記部分 T1078 的重複 tactic rows；adapter 會將這個 sentinel 還原為 T1078，再展開上述四個 tactic targets，不會將它當成 Benign。
 - technique probes 只使用 malicious flows，比較 `X`、前 13 個 `gates`、`C_summary`、`H` 與 `HC`。五類為 T1048、T1078、T1110、T1190、T1595。
 
 flow text 只序列化 protocol、service、ports、connection state、history、local flags，以及 log2-bucketed duration/bytes/packet counts。UID、community ID、IP、時間與所有 label 欄位都不會進入文字 embedding。

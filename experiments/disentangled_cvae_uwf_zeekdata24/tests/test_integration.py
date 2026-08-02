@@ -46,14 +46,15 @@ def synthetic_category_rows() -> dict[str, list[dict[str, str]]]:
             uwf_row(f"t1190-{index}", "Initial Access", "T1190", index)
         )
         rows["Initial_Access"].append(
-            uwf_row(f"t1078-{index}", "Initial Access", "T1078", index)
+            uwf_row(f"t1078-{index}", "Initial Access", "Duplicate", index)
         )
         for category, tactic in (
             ("Defense_Evasion", "Defense Evasion"),
             ("Persistence", "Persistence"),
             ("Privilege_Escalation", "Privilege Escalation"),
         ):
-            rows[category].append(uwf_row(f"t1078-{index}", tactic, "T1078", index))
+            technique = "T1078" if category == "Defense_Evasion" else "Duplicate"
+            rows[category].append(uwf_row(f"t1078-{index}", tactic, technique, index))
     return rows
 
 
@@ -196,6 +197,8 @@ class IntegrationTests(unittest.TestCase):
             self.assertTrue({"x", "gates", "c", "h", "hc"}.issubset(probe_metrics))
             with np.load(prepared_dir / "split.npz") as split:
                 self.assertEqual(sum(len(split[name]) for name in ("train", "val", "test")), 90)
+            prepared_manifest = json.loads((prepared_dir / "manifest.json").read_text(encoding="utf-8"))
+            self.assertEqual(prepared_manifest["duplicate_sentinel_rows_restored_as_t1078"], 45)
 
 
 if __name__ == "__main__":

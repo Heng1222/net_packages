@@ -44,6 +44,20 @@ class DataTests(unittest.TestCase):
         actual = {TACTIC_LABELS[index] for index in np.flatnonzero(targets[0])}
         self.assertEqual(actual, expected)
 
+    def test_official_duplicate_sentinel_maps_to_t1078_group(self) -> None:
+        row = uwf_row("duplicate-row", "Persistence", "Duplicate")
+        row["label_binary"] = "Duplicate"
+        frame = aggregate_flows([pd.DataFrame([row])])
+        targets = tactic_target_matrix(frame)
+        self.assertEqual(frame.loc[0, "technique"], "T1078")
+        self.assertEqual(int(frame.loc[0, "duplicate_sentinel_rows"]), 1)
+        self.assertEqual(int(targets.sum()), 4)
+
+    def test_duplicate_sentinel_is_rejected_outside_t1078_tactics(self) -> None:
+        row = uwf_row("invalid-duplicate", "Credential Access", "Duplicate")
+        with self.assertRaisesRegex(ValueError, "only valid for a UWF T1078 tactic row"):
+            aggregate_flows([pd.DataFrame([row])])
+
     def test_stratified_split_is_reproducible_and_disjoint(self) -> None:
         labels = np.asarray([label for label in ("Benign", "T1110", "T1595") for _ in range(20)])
         config = {"train_ratio": 0.7, "val_ratio": 0.15, "test_ratio": 0.15}

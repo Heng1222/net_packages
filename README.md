@@ -63,10 +63,11 @@ bash scripts/setup_gputw.sh
 source .gputw-env
 ```
 
-The setup installs persistent copies of uv, Python 3.12, the locked project
-environment, and model caches; it also validates the NVIDIA driver and executes
-a real PyTorch CUDA operation. See [docs/GPUTW_DEPLOYMENT.md](docs/GPUTW_DEPLOYMENT.md)
-for upload, training, persistence, and shutdown instructions.
+The setup installs `btop`, `tmux`, and persistent copies of uv, Python 3.12,
+the locked project environment (including `gdown`), and model caches; it also
+validates the NVIDIA driver and executes a real PyTorch CUDA operation. See
+[docs/GPUTW_DEPLOYMENT.md](docs/GPUTW_DEPLOYMENT.md) for upload, training,
+persistence, and shutdown instructions.
 
 ## Data placement
 

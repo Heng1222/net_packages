@@ -50,9 +50,12 @@ The script:
 
 - refuses to proceed if the project is outside the persistent Vault;
 - verifies the NVIDIA driver and selected GPU with `nvidia-smi`;
+- installs the `btop` system monitor and `tmux` terminal multiplexer through
+  the system package manager;
 - installs pinned `uv` 0.11.32 and managed Python 3.12 in
   `/vault/.net-packages`;
 - installs the exact `uv.lock` environment plus all optional project extras;
+- installs and verifies the lockfile-managed `gdown` command;
 - keeps uv, Hugging Face, Sentence Transformers, Torch, and Matplotlib caches in
   `/vault/.net-packages/cache`;
 - creates persistent input and output directories; and

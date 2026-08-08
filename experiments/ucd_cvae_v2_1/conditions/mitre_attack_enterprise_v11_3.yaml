@@ -1,0 +1,47 @@
+metadata:
+  framework: "MITRE Enterprise ATT&CK"
+  version: "11.3"
+  note: "Fourteen Enterprise tactics; Normal is intentionally not a concept."
+tactics:
+  Initial Access (TA0001):
+    tactic_id: TA0001
+    description_full: "The adversary is trying to get into your network. Initial Access consists of techniques that use various entry vectors to gain an initial foothold within a network."
+  Execution (TA0002):
+    tactic_id: TA0002
+    description_full: "The adversary is trying to run malicious code. Execution consists of techniques that result in adversary-controlled code running on a local or remote system."
+  Persistence (TA0003):
+    tactic_id: TA0003
+    description_full: "The adversary is trying to maintain their foothold. Persistence consists of techniques used to keep access across restarts, changed credentials, and other interruptions."
+  Privilege Escalation (TA0004):
+    tactic_id: TA0004
+    description_full: "The adversary is trying to gain higher-level permissions. Privilege Escalation consists of techniques used to obtain elevated access on a system or network."
+  Defense Evasion (TA0005):
+    tactic_id: TA0005
+    description_full: "The adversary is trying to avoid being detected. Defense Evasion consists of techniques used to avoid detection throughout a compromise."
+  Credential Access (TA0006):
+    tactic_id: TA0006
+    description_full: "The adversary is trying to steal account names and passwords. Credential Access consists of techniques for stealing credentials."
+  Discovery (TA0007):
+    tactic_id: TA0007
+    description_full: "The adversary is trying to figure out your environment. Discovery consists of techniques used to gain knowledge about systems and internal networks."
+  Lateral Movement (TA0008):
+    tactic_id: TA0008
+    description_full: "The adversary is trying to move through your environment. Lateral Movement consists of techniques used to enter and control remote systems on a network."
+  Collection (TA0009):
+    tactic_id: TA0009
+    description_full: "The adversary is trying to gather data of interest to their goal. Collection consists of techniques used to gather information from relevant sources."
+  Exfiltration (TA0010):
+    tactic_id: TA0010
+    description_full: "The adversary is trying to steal data. Exfiltration consists of techniques used to remove data from a target network."
+  Command and Control (TA0011):
+    tactic_id: TA0011
+    description_full: "The adversary is trying to communicate with compromised systems to control them. Command and Control consists of techniques used to communicate with systems under adversary control."
+  Impact (TA0040):
+    tactic_id: TA0040
+    description_full: "The adversary is trying to manipulate, interrupt, or destroy systems and data. Impact consists of techniques used to disrupt availability or compromise integrity by manipulating business and operational processes."
+  Resource Development (TA0042):
+    tactic_id: TA0042
+    description_full: "The adversary is trying to establish resources they can use to support operations. Resource Development consists of techniques used to create, purchase, compromise, or obtain resources."
+  Reconnaissance (TA0043):
+    tactic_id: TA0043
+    description_full: "The adversary is trying to gather information they can use to plan future operations. Reconnaissance consists of active or passive information gathering for targeting."

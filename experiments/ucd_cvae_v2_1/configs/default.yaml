@@ -1,0 +1,80 @@
+seed: 42
+
+data:
+  input_path: "Year=2022/Step1_rawdata_cleaned.csv"
+  prepared_dir: "outputs/ucd_cvae_v2_1/prepared/payload_modernbert"
+  sample_id_col: "Session_ID"
+  payload_text_col: "clean_payload_list"
+  time_col: "Datetime"
+  metadata_cols: ["Sess_Tactic_predict", "Protocol", "Src_ISP"]
+  payload_parser: "auto"
+  read_chunksize: 5000
+  max_rows: null
+  split: {strategy: "time", train_ratio: 0.70, val_ratio: 0.15, test_ratio: 0.15}
+  embedder:
+    backend: "sentence_transformers"
+    model_name: "nomic-ai/modernbert-embed-base"
+    model_revision: "d556a88e332558790b210f7bdbe87da2fa94a8d8"
+    max_length: 8192
+    overflow_strategy: "chunk_mean"
+    batch_size: 4
+    normalize: true
+
+conditions:
+  path: "experiments/ucd_cvae_v2_1/conditions/mitre_attack_enterprise_v11_3.yaml"
+  cache_dir: "outputs/ucd_cvae_v2_1/prepared/conditions"
+  text_field: "description_full"
+  common_label: "Common Malicious Component"
+  embedder:
+    backend: "sentence_transformers"
+    model_name: "nomic-ai/modernbert-embed-base"
+    model_revision: "d556a88e332558790b210f7bdbe87da2fa94a8d8"
+    batch_size: 4
+    normalize: true
+
+model:
+  input_dim: 768
+  residual_dim: 16
+  gate_hidden_dims: [512, 128]
+  residual_hidden_dims: [512, 128]
+  residual_up_hidden_dims: [128, 512]
+  decoder_hidden_dims: [1024, 768]
+  concept_projector_hidden_dim: 256
+  activation: "gelu"
+  dropout: 0.1
+  geometry_variant: "full_orthogonal"
+  geometry_epsilon: 1.0e-6
+  alignment_temperature: 0.1
+
+loss:
+  reconstruction: 1.0
+  kl: 0.01
+  sparse: 0.001
+  align: 1.0
+
+training:
+  batch_size: 128
+  max_epochs: 200
+  learning_rate: 0.0005
+  weight_decay: 0.001
+  early_stopping_patience: 15
+  num_workers: 0
+  device: "auto"
+  phase1_end: 5
+  phase2_end: 15
+  gradnorm_max_ratio: 10.0
+  gradnorm_epsilon: 1.0e-12
+
+evaluation:
+  golden_path: "Year=2022/Step2_golden_review_2_with_Tactic.csv"
+  golden_sample_id_col: "Session_ID"
+  golden_label_col: "Tactic"
+  normal_label: "Normal (TA9000)"
+  benign_threshold: 0.10
+  block_threshold: 0.50
+  top_k: 3
+
+variants: ["full_orthogonal", "common_removal_only"]
+
+output:
+  base_dir: "outputs/ucd_cvae_v2_1"
